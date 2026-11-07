@@ -1,0 +1,23 @@
+# Secrets
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# Raw data (keep only small samples and placeholders)
+data/raw/*
+!data/raw/.gitkeep
+*.tif
+*.tiff
+!workshop_1/samples/*.tif
+
+# OS / editors
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
