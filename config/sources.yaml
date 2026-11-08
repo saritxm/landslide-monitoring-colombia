@@ -1,70 +1,105 @@
-# One entry per data source.
-# Fields marked "TO VALIDATE" must be confirmed with real queries in Workshop #1.
+# One entry per data source. Validated with real queries on 2026-11-07 (UTC);
+# evidence in workshop_1/samples/ and docs/source_status_log.md.
 
 scope:
   name: Colombia
   bbox: {min_lat: -4.3, max_lat: 13.5, min_lon: -79.1, max_lon: -66.8}
+  timezone_local: America/Bogota   # UTC-05:00, no daylight saving time
+  landslide_window: {start: 2007-01-01, end: 2017-12-31}   # limited by the GLC
+  rainfall_window: {start: 2007-01-01, end: present}
+
+http:
+  user_agent_env: HTTP_USER_AGENT
+  retries: 4
+  backoff_seconds: [2, 4, 8, 16]
+  timeout_seconds: 60
 
 sources:
   - id: nasa_glc
-    name: NASA Global Landslide Catalog (COOLR)
+    name: NASA Global Landslide Catalog (export)
     role: historical
     owner: NASA Goddard Space Flight Center
-    url: https://gpm.nasa.gov/landslides/data.html   # TO VALIDATE: exact download URL
+    url: https://data.nasa.gov/docs/legacy/Global_Landslide_Catalog_Export/Global_Landslide_Catalog_Export_rows.csv
+    landing_page: https://data.nasa.gov/dataset/global-landslide-catalog-export
+    access: HTTP GET, redirects (302) to a pre-signed S3 URL valid 3600 s; follow redirects, never store the S3 URL
     format: csv
     auth: none
-    schedule: once            # static inventory, re-checked occasionally
-    watermark_field: null     # full reload; detect changes by content hash
-    duplicate_key: event_id
-    license: Public domain (NASA data)  # TO VALIDATE
+    rate_limit: none documented
+    coverage: 1988-11-07 to 2017-09-28, 11,033 events (107 in Colombia)
+    schedule: "0 6 1 * *"     # monthly check
+    watermark_field: etag      # file is frozen; reload only if the ETag changes
+    duplicate_key: [event_id]
+    license: U.S. Government work (NASA open data); attribution requested
     attribution: >-
-      Kirschbaum, D.B., Adler, R., Hong, Y., Hill, S., Lerner-Lam, A. (2010).
-      A global landslide catalog for hazard applications. Natural Hazards.
-      Kirschbaum, D.B., Stanley, T., Zhou, Y. (2015). Spatial and temporal
-      analysis of a global landslide catalog. Geomorphology.
+      Kirschbaum, D.B., Adler, R., Hong, Y., Hill, S., Lerner-Lam, A. (2010). A global landslide
+      catalog for hazard applications: method, results, and limitations. Natural Hazards, 52, 561-575.
+      Kirschbaum, D.B., Stanley, T., Zhou, Y. (2015). Spatial and temporal analysis of a global
+      landslide catalog. Geomorphology, 249, 4-15.
 
   - id: openmeteo_historical
     name: Open-Meteo Historical Weather API (ERA5 reanalysis)
     role: historical
     owner: Open-Meteo
     url: https://archive-api.open-meteo.com/v1/archive
+    access: REST GET, multiple locations per request
     format: json
     auth: none
-    rate_limit: ~10,000 calls/day, non-commercial use
-    schedule: once
-    partitioning: by grid point and year
-    watermark_field: date     # daily values
+    rate_limit: >-
+      free non-commercial tier: 600/min, 5,000/h, 10,000/day; request weight =
+      locations x days/14 x variables/10 (confirmed by the X-RateLimit-Cost header)
+    params: {daily: precipitation_sum, timezone: America/Bogota}
+    schedule: "0 7 1 * *"     # monthly extension
+    partitioning: groups of grid points x calendar year
+    watermark_field: date      # last date loaded per grid cell
+    overlap_window_days: 10
     duplicate_key: [latitude, longitude, date]
     license: CC BY 4.0
-    attribution: Weather data by Open-Meteo.com (CC BY 4.0), ERA5 by Copernicus/ECMWF
+    attribution: Weather data by Open-Meteo.com (CC BY 4.0); ERA5 reanalysis by Copernicus Climate Change Service / ECMWF
 
   - id: openmeteo_forecast
     name: Open-Meteo Forecast API
     role: incremental
     owner: Open-Meteo
     url: https://api.open-meteo.com/v1/forecast
+    access: REST GET, multiple locations per request
     format: json
     auth: none
-    rate_limit: ~10,000 calls/day, non-commercial use
-    schedule: hourly          # TO VALIDATE
-    watermark_field: time     # last observed hourly timestamp (UTC)
-    overlap_window: past_days=2   # recent values can be revised
+    rate_limit: same as openmeteo_historical
+    params:
+      hourly: precipitation,rain,soil_moisture_0_to_1cm
+      current: precipitation,rain
+      past_days: 2
+      forecast_days: 3
+      timezone: UTC
+    schedule: "10 * * * *"    # hourly
+    watermark_field: hourly.time   # last past hour stored per grid cell
+    overlap_window: past_days=2    # past hours are revised by new model runs
+    change_detection: content hash per (cell, hour); no ETag / Last-Modified headers
     duplicate_key: [latitude, longitude, time]
     license: CC BY 4.0
     attribution: Weather data by Open-Meteo.com (CC BY 4.0)
 
   - id: nasa_lhasa
-    name: NASA LHASA global landslide nowcast
+    name: NASA LHASA global landslide nowcast (NRT, v2)
     role: incremental
     owner: NASA Goddard Space Flight Center
-    url: https://maps.nccs.nasa.gov/download/landslides/nowcast/
+    url: https://portal.nccs.nasa.gov/datashare/landslides/nrt/hazard/tif/
+    landing_page: https://gpm.nasa.gov/applications/landslides
+    replaces: https://maps.nccs.nasa.gov/download/landslides/nowcast/   # unreachable (HTTP 502) on 2026-11-07
+    access: directory listing + one GeoTIFF per issue time (YYYYMMDDTHHMM.tif); tiled, read the Colombia window with HTTP range requests
     format: geotiff
     auth: none
-    schedule: daily
-    watermark_field: file_date   # date in file name; also Last-Modified header  # TO VALIDATE
-    duplicate_key: [file_date, cell]
-    availability: best effort (may skip days)
-    license: Public domain (NASA data)  # TO VALIDATE
+    rate_limit: none documented; one listing + one file per day
+    raster: {crs: EPSG:4326, resolution_deg: 0.008333, orientation: south-up, declared_nodata: -9999, actual_missing: NaN}
+    schedule: "30 6 * * *"    # daily; files appeared at ~05:07 UTC, ~29 h after nominal time
+    watermark_field: file_issue_time   # from the file name
+    overlap_window_days: 7             # re-list and compare ETag
+    availability: best effort; 17 gaps (41 missing days) between 2025-01-01 and 2026-11-06
+    duplicate_key: [issue_time, cell_id]
+    license: U.S. Government work (NASA open data); attribution requested
     attribution: >-
-      Kirschbaum, D., Stanley, T. (2018). Satellite-based assessment of
-      rainfall-triggered landslide hazard for situational awareness. Earth's Future.
+      Stanley, T.A., Kirschbaum, D.B., et al. (2020). Building a landslide hazard indicator with
+      machine learning and land surface models. Environmental Modelling & Software, 129, 104692.
+      https://doi.org/10.1016/j.envsoft.2020.104692
+      Kirschbaum, D., Stanley, T. (2018). Satellite-based assessment of rainfall-triggered landslide
+      hazard for situational awareness. Earth's Future, 6, 505-523.

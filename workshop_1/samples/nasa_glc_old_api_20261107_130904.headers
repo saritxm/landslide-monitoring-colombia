@@ -1,0 +1,18 @@
+HTTP/1.1 200 Connection Established
+
+HTTP/2 404 
+date: Sat, 07 Nov 2026 13:09:07 GMT
+content-type: text/html; charset=utf-8
+content-length: 21268
+vary: Accept-Encoding
+cache-control: private
+set-cookie: ckan=eyJfY3NyZl90b2tlbiI6ImUxMTFmYWE3ZjJmZDk5ZGFhZTRhNzI4OTJlZmRkYzIzMzRmZmE1MGMifQ.au8i8w.ULypOFUYxmUAuNZnSh76zPafvtE; Domain=; HttpOnly; Path=/; SameSite=Lax
+vary: Cookie
+strict-transport-security: max-age=31536000; includeSubDomains; preload
+referrer-policy: strict-origin-when-cross-origin
+x-content-type-options: nosniff
+x-frame-options: SAMEORIGIN
+x-powered-by: appdat
+x-using-nginx-controller: true
+x-xss-protection: 1; mode=block
+

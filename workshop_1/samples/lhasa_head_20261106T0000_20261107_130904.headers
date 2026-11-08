@@ -1,0 +1,13 @@
+HTTP/1.1 200 Connection Established
+
+HTTP/1.1 200 OK
+Date: Sat, 07 Nov 2026 13:09:05 GMT
+Server: nginx/1.14.1
+Strict-Transport-Security: max-age=31536000
+Content-Type: image/tiff
+Content-Length: 145027040
+Last-Modified: Sat, 07 Nov 2026 05:07:25 GMT
+ETag: "6aeeb20d-8a4efe0"
+Accept-Ranges: bytes
+Strict-Transport-Security: max-age=63072000; includeSubDomains;
+

@@ -14,7 +14,7 @@ The output is a **Landslide Risk Indicator per region**. It is a monitoring and 
 aid, **not a prediction** of landslides.
 
 - **Geographic scope:** Colombia (approx. lat −4.3 to 13.5, lon −79.1 to −66.8)
-- **Historical window:** to be confirmed in Workshop #1 (at least five years)
+- **Historical window:** landslides 2007–2017 (the NASA catalog ends in September 2017); rainfall 2007–present
 
 ## Team
 
@@ -26,14 +26,16 @@ aid, **not a prediction** of landslides.
 
 ## Data sources
 
-Proposed sources, being validated in Workshop #1:
+Validated with real queries on 2026-11-07 (evidence in `workshop_1/samples/`):
 
 | Role | Source | Format | Key needed |
 |---|---|---|---|
-| Historical 1 | NASA Global Landslide Catalog (COOLR) | CSV | No |
+| Historical 1 | NASA Global Landslide Catalog | CSV (bulk file) | No |
 | Historical 2 | Open-Meteo Historical Weather API (ERA5) | JSON REST | No |
 | Incremental 1 | Open-Meteo Forecast API | JSON REST | No |
-| Incremental 2 | NASA LHASA global landslide nowcast | GeoTIFF raster (daily) | No |
+| Incremental 2 | NASA LHASA landslide nowcast (NRT v2) | GeoTIFF raster (daily) | No |
+
+Changes detected in the sources are recorded in `docs/source_status_log.md`.
 
 Licenses and attribution requirements are recorded in `config/sources.yaml`.
 
@@ -52,6 +54,13 @@ docs/             documentation and diagrams
 workshop_1/       Workshop #1 deliverables (samples, mapping)
 ```
 
+## Workshop #1 deliverables
+
+- `notebooks/01_source_profiling.ipynb` — source profiling, executed with outputs
+- `workshop_1/samples/` — raw responses kept as received (large files: `python workshop_1/download_samples.py`)
+- `workshop_1/mapping.md` — canonical mapping, domain tables, ingestion contracts and ER diagram
+- `docs/er_diagram.png`, `docs/source_status_log.md`
+
 ## Setup
 
 ```bash
@@ -64,7 +73,7 @@ cp .env.example .env
 ## Usage (contract; implemented from Workshop #2)
 
 ```bash
-python ingest.py --mode historical --start 2015-01-01 --end 2025-12-31
+python ingest.py --mode historical --start 2007-01-01 --end 2026-11-06
 python ingest.py --mode incremental
 python ingest.py --mode status
 ```

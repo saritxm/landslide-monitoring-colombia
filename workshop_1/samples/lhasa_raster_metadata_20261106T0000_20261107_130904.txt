@@ -1,0 +1,4 @@
+{'driver': 'GTiff', 'dtype': 'float64', 'nodata': -9999.0, 'width': 43200, 'height': 14400, 'count': 1, 'crs': CRS.from_wkt('GEOGCS["WGS 84",DATUM["WGS_1984",SPHEROID["WGS 84",6378137,298.257223563,AUTHORITY["EPSG","7030"]],AUTHORITY["EPSG","6326"]],PRIMEM["Greenwich",0,AUTHORITY["EPSG","8901"]],UNIT["degree",0.0174532925199433,AUTHORITY["EPSG","9122"]],AXIS["Latitude",NORTH],AXIS["Longitude",EAST],AUTHORITY["EPSG","4326"]]'), 'transform': Affine(0.00833333333333333, 0.0, -180.0,
+       0.0, 0.00833333333333333, -59.99993999666669), 'blockxsize': 512, 'blockysize': 512, 'tiled': True, 'compress': 'zstd', 'interleave': 'band'}
+BoundingBox(left=-180.0, bottom=60.00006000333325, right=179.99999999999983, top=-59.99993999666669)
+[2, 4, 8, 16, 32, 64, 128]

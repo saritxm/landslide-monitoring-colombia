@@ -1,0 +1,20 @@
+digraph G {
+  rankdir=TB; bgcolor="white"; nodesep=0.35; ranksep=0.45;
+  node [shape=box, style="rounded,filled", fontname="Helvetica", fontsize=13, fillcolor="#eef3f8", color="#4a6785"];
+  edge [color="#4a6785", fontname="Helvetica", fontsize=9];
+  subgraph cluster_src { rank=same; label="Sources"; fontname="Helvetica-Bold"; color="#bbbbbb"; style="rounded";
+    glc [label="NASA Global Landslide\nCatalog (CSV)\nhistorical"];
+    omh [label="Open-Meteo Historical\n(ERA5, JSON)\nhistorical"];
+    omf [label="Open-Meteo Forecast\n(JSON, hourly)\nincremental"];
+    lha [label="NASA LHASA nowcast\n(GeoTIFF, daily)\nincremental"]; }
+  orch [label="Scheduler (Airflow DAG)\npython ingest.py\n--mode historical | incremental | status", fillcolor="#fff4e0", color="#c08a2b"];
+  raw [label="Raw landing zone\ndata/raw/\nsource_YYYYMMDD_HHMMSS.ext", fillcolor="#f5f5f5"];
+  proc [label="Normalize · validate ·\ndeduplicate · LHASA\naggregation to 0.25° cells"];
+  q [label="Quarantine\nrejected_record", fillcolor="#fde8e8", color="#b54848"];
+  db [label="PostgreSQL + PostGIS\nsource · ingestion_run · ingestion_state\nevent · event_group\nlandslide · rainfall_observation\nlhasa_nowcast · analysis_cell", shape=cylinder, fillcolor="#e8f4ec", color="#3d7a52"];
+  an [label="Analytics\nantecedent rainfall vs. history,\nLHASA, landslide density\n→ Landslide Risk Indicator"];
+  dash [label="Plotly Dash dashboard\nlocalhost:8050\n(analyst view + data health)", fillcolor="#e8eef9"];
+  
+  {glc omh omf lha} -> raw; orch -> raw [style=dashed, label="triggers"];
+  raw -> proc; proc -> db; proc -> q; db -> an; an -> dash; {rank=same; proc; q;} {rank=same; an; dash;} {rank=same; orch; raw;}
+}

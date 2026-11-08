@@ -1,0 +1,1 @@
+https://archive-api.open-meteo.com/v1/archive?latitude=4.711,6.244,5.070,1.152,3.452,7.119,1.214,4.438,2.444,4.813&longitude=-74.072,-75.581,-75.517,-76.646,-76.532,-73.123,-77.281,-75.232,-76.614,-75.696&start_date=2016-01-01&end_date=2017-12-31&daily=precipitation_sum,rain_sum,precipitation_hours&timezone=UTC

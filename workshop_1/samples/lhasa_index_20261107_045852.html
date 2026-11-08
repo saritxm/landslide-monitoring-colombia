@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <link rel="shortcut icon" href="/datashare/.include/flat_zymphonies_theme/favicon.ico" type="image/vnd.microsoft.icon" />
+    <meta name="viewport" content="width=device-width"/>
+    <meta http-equiv="content-type" content="text/html; charset=utf-8"/>
+
+    <style type="text/css" media="all">
+        @import url("/datashare/.include/flat_zymphonies_theme/css/font-awesome.css");
+        @import url("/datashare/.include/flat_zymphonies_theme/css/media.css");
+        @import url("/datashare/.include/flat_zymphonies_theme/css/bootstrap-3.3.7.css");
+        @import url("/datashare/.include/flat_zymphonies_theme/css/style.css");
+        @import url("/datashare/.include/flat_zymphonies_theme/css/nccs.css");
+        @import url("/datashare/.include/flat_zymphonies_theme/css/media_nccs.css");
+        /* Added styles for attention banner */
+        .attention-banner {
+            background-color: #f8d7da;
+            color: #721c24;
+            padding: 15px;
+            margin: 10px 0;
+            border: 1px solid #f5c6cb;
+            border-radius: 4px;
+            font-weight: bold;
+        }
+    </style>
+    <!-- from Nginxy -->
+    <link rel="stylesheet" href="/datashare/.include/nginxy/css/style.css" type="text/css"/>
+
+	<!-- jQuery -->
+	<script src="https://ajax.googleapis.com/ajax/libs/jquery/1.12.4/jquery.min.js"></script>
+	<script src="/datashare/.include/nginxy/js/config.js"></script>
+
+</head>
+
+<body class="html front page-node">
+<div class="header">
+  <div class="menu-wrap">
+    <div class="logo-wrap clearfix">
+      <div class="full-wrap">
+          <div id="logo">
+            <a href="/" title="Home"><img src="/datashare/.include/NCCS_Logo_0.png"/></a>
+          </div>
+          <h2 id="site-title"><a href="/" title="Home">NASA Center for Climate Simulation</a></h2>
+          <h5 class="nccs-tagline"> High Performance Computing for Science</h5>
+      </div> <!-- .full-wrap -->
+    </div> <!-- .logo-wrap -->
+  </div> <!-- .menu-wrap -->
+</div> <!-- .header -->
+
+<div class="content">
+<br>
+<br>
+<br>
+<br>
+
+<!-- Attention banner placeholder -->
+<div id="attention-banner" class="attention-banner"></div>
+
+<script>
+$(document).ready(function() {
+  // Map directories to banner messages
+  const banners = {
+    "/datashare/gmao/geos-cf/": "ATTENTION GEOS-CF USERS.: To stay informed about GEOS-CF production status and future upgrades, please send an email with 'subscribe' in the subject to <a href='mailto:geos-cf-users-join@lists.nasa.gov'>geos-cf-users-join@lists.nasa.gov</a> and follow the instructions to confirm the subscription with a follow-up e-mail. Thank you for your interest in GEOS-CF products.",
+
+    "/datashare/gmao/geos-fp/": "ATTENTION GEOS-FP USERS.: We need to keep you informed about important changes coming to GEOS-FP products. If you are not on the geos5-fp-users mailing list, please join now. Either contact <a href='mailto:Rob.Lucchesi@nasa.gov'>Rob.Lucchesi@nasa.gov</a> directly or send an email with 'subscribe' in the subject to <a href='mailto:geos5-fp-users-join@lists.nasa.gov'>geos5-fp-users-join@lists.nasa.gov</a> and follow the instructions to confirm the subscription with a follow-up e-mail. Thank you for your interest in GEOS-FP products."
+  };
+
+  const path = window.location.pathname; // Current URL path
+
+  let message = null;
+  $.each(banners, function(dir, text) {
+    if (path.startsWith(dir)) {
+      message = text;
+      return false; // break loop once matched
+    }
+  });
+
+  if (message) {
+    $("#attention-banner").html(message).show();
+  } else {
+    $("#attention-banner").hide(); // Hide banner if no match
+  }
+});
+</script>
+</div>
+  <h1 id="nccs-tagline">
+/datashare/landslides/nrt/</h1>
+<table id="list"><thead><tr><th colspan="2"><a href="?C=N&amp;O=A">File Name</a>&nbsp;<a href="?C=N&amp;O=D">&nbsp;&darr;&nbsp;</a></th><th><a href="?C=S&amp;O=A">File Size</a>&nbsp;<a href="?C=S&amp;O=D">&nbsp;&darr;&nbsp;</a></th><th><a href="?C=M&amp;O=A">Date</a>&nbsp;<a href="?C=M&amp;O=D">&nbsp;&darr;&nbsp;</a></th></tr></thead>
+<tbody><tr><td colspan="2" class="link"><a href="../">Parent directory/</a></td><td class="size">-</td><td class="date">-</td></tr>
+<tr><td colspan="2" class="link"><a href="exposure/" title="exposure">exposure/</a></td><td class="size">-</td><td class="date">May 26, 2021</td></tr>
+<tr><td colspan="2" class="link"><a href="hazard/" title="hazard">hazard/</a></td><td class="size">-</td><td class="date">November  6, 2026</td></tr>
+</tbody></table>	<!-- End of nginx output -->
+				</div>
+			</div>
+			<div id="footer" class="row">
+            <br>
+            NASA Official: <a href="mailto:ellen.m.salmon@nasa.gov">Ellen
+            Salmon </a><br />
+            Contact: <a href="mailto:support@nccs.nasa.gov">NCCS Support</a><br />
+            Last Updated: 06/02/2026
+                <br>
+                <a href="https://www.nasa.gov/goddard">
+                <img
+                src="https://www.nccs.nasa.gov/sites/default/files/pictures/nasa-goddard-logo.png"
+                alt="GSFC" width="120px" border="0">
+                </a>
+                <br>
+              <a href="http://www.nasa.gov/about/highlights/HP_Privacy.html">Privacy Policy and Important Notices</a>
+			</div>
+		</div>
+	</body>
+</html>

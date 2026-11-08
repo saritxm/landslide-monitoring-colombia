@@ -1,0 +1,10 @@
+HTTP/1.1 200 Connection Established
+
+HTTP/1.1 200 OK
+Date: Sat, 07 Nov 2026 04:59:47 GMT
+Server: nginx/1.14.1
+Strict-Transport-Security: max-age=31536000
+Content-Type: text/html
+Strict-Transport-Security: max-age=63072000; includeSubDomains;
+Transfer-Encoding: chunked
+
