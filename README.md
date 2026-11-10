@@ -20,9 +20,9 @@ aid, **not a prediction** of landslides.
 
 | Student ID | Name |
 |---|---|
-| 20231020072 | Samuel Leal |
-| 20231020100 | Cristian Gámez |
-| 20231020116 | Sara Martínez |
+| 20231020072 | Samuel Alberto Leal Saenz |
+| 20231020100 | Cristian Andres Gámez Nuñez |
+| 20231020116 | Sara Nicolle Martínez Moreno |
 
 ## Data sources
 
@@ -56,6 +56,7 @@ workshop_1/       Workshop #1 deliverables (samples, mapping)
 
 ## Workshop #1 deliverables
 
+- `docs/technical_report.pdf` — Project Definition Technical Report
 - `notebooks/01_source_profiling.ipynb` — source profiling, executed with outputs
 - `workshop_1/samples/` — raw responses kept as received (large files: `python workshop_1/download_samples.py`)
 - `workshop_1/mapping.md` — canonical mapping, domain tables, ingestion contracts and ER diagram
