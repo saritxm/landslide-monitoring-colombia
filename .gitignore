@@ -16,6 +16,8 @@ data/raw/*
 *.tiff
 !workshop_1/samples/*.tif
 
+technical_report/
+
 # OS / editors
 .DS_Store
 Thumbs.db
