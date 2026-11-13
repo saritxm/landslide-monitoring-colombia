@@ -103,6 +103,28 @@ Common tables (from the course data model): `source`, `ingestion_run`, `ingestio
 - **Validation (rejected → `rejected_record`):** missing id or timestamp, coordinates out of range, negative
   precipitation, LHASA value outside [0, 1], unit different from the expected one.
 
+## 4.1 Cross-Source Overlap and Temporal Modeling (GLC vs. LHASA)
+
+A central challenge in the project is the ~8-year temporal gap between the historical landslide inventory
+(NASA GLC ends September 2017) and the operational nowcast (NASA LHASA begins January 2025). As established
+in `notebooks/01_source_profiling.ipynb`, this was addressed using **Facebook Prophet**:
+
+1. **Time-series aggregation:** Colombian historical landslides were aggregated into regular monthly counts
+   (129 months, 2007–2017).
+2. **Train/Test Validation (2007–2014 train, 2015–2017 test):**
+   - **MAE:** `0.912` landslides/month, **RMSE:** `1.248` landslides/month (against a real test mean of 0.545).
+   - Real test occurrences fell within the model's 95% confidence intervals, validating its ability to capture
+     low-frequency baseline activity.
+3. **Long-range extrapolation to 2025–2026 (LHASA era):**
+   - The learned annual seasonality reveals strong bimodal peaks in **April–May (+1.34 events/mo)** and
+     **October–November (+1.78 events/mo)**, matching Colombia's climatological rainy seasons.
+   - This macro-seasonal peak in November directly correlates with high hazard values (>0.90) observed across
+     Andean departments in the November 2026 LHASA GeoTIFF samples.
+   - **Methodological limit:** Extrapolating 8 years widens the uncertainty interval (~6 events/month range),
+     confirming that landslides are episodic physical events triggered by acute storms (e.g. 2010–2011 La Niña)
+     rather than autonomous deterministic cycles. Overlap between GLC and LHASA must therefore be analyzed at the
+     **spatial and macro-seasonal hazard level**, not as individual 1-to-1 event matches.
+
 ## 5. Ingestion contracts
 
 | | NASA GLC | Open-Meteo historical | Open-Meteo forecast | NASA LHASA |
