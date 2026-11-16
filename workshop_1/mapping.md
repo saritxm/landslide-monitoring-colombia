@@ -105,25 +105,20 @@ Common tables (from the course data model): `source`, `ingestion_run`, `ingestio
 
 ## 4.1 Cross-Source Overlap and Temporal Modeling (GLC vs. LHASA)
 
-A central challenge in the project is the ~8-year temporal gap between the historical landslide inventory
-(NASA GLC ends September 2017) and the operational nowcast (NASA LHASA begins January 2025). As established
-in `notebooks/01_source_profiling.ipynb`, this was addressed using **Facebook Prophet**:
+The NASA GLC ends in September 2017 and the LHASA NRT archive starts in January 2025, so the sources share no
+period. Following the professor's guidance, `notebooks/01_source_profiling.ipynb` (Section 6c) tests whether the
+national monthly landslide count can be forecast with **Facebook Prophet** and extended to the LHASA period:
 
-1. **Time-series aggregation:** Colombian historical landslides were aggregated into regular monthly counts
-   (129 months, 2007–2017).
-2. **Train/Test Validation (2007–2014 train, 2015–2017 test):**
-   - **MAE:** `0.912` landslides/month, **RMSE:** `1.248` landslides/month (against a real test mean of 0.545).
-   - Real test occurrences fell within the model's 95% confidence intervals, validating its ability to capture
-     low-frequency baseline activity.
-3. **Long-range extrapolation to 2025–2026 (LHASA era):**
-   - The learned annual seasonality reveals strong bimodal peaks in **April–May (+1.34 events/mo)** and
-     **October–November (+1.78 events/mo)**, matching Colombia's climatological rainy seasons.
-   - This macro-seasonal peak in November directly correlates with high hazard values (>0.90) observed across
-     Andean departments in the November 2026 LHASA GeoTIFF samples.
-   - **Methodological limit:** Extrapolating 8 years widens the uncertainty interval (~6 events/month range),
-     confirming that landslides are episodic physical events triggered by acute storms (e.g. 2010–2011 La Niña)
-     rather than autonomous deterministic cycles. Overlap between GLC and LHASA must therefore be analyzed at the
-     **spatial and macro-seasonal hazard level**, not as individual 1-to-1 event matches.
+1. **Series:** 107 Colombian GLC events aggregated by month, 2007-01 → 2017-09 (129 months, empty months = 0).
+2. **Split:** train on the first 80 % (2007-01 → 2015-07, 103 months), test on the last 20 % (2015-08 → 2017-09, 26 months).
+3. **Result:** Prophet MAE 0.885 / RMSE 1.079 events/month; baselines: always 0 → MAE 0.462 / RMSE 0.832,
+   training mean → MAE 0.745 / RMSE 0.832. Prophet does **not** beat the baselines; it over-predicts
+   (≈ 0.99 vs. 0.46 observed) because 58 % of all events fall in the 2010–2011 La Niña. Over 2007–2017 the fitted
+   model gives ≈ 9–11 events per year while the real totals range from 2 to 39 (correlation 0.35).
+4. **Extension 2025–2026:** ≈ 6 events/year, kept as an **illustrative baseline only**; it is not used as ground
+   truth for LHASA.
+5. **Next step:** add monthly Open-Meteo rainfall as a Prophet regressor and compare month by month with the
+   monthly mean of the LHASA archive (2025–2026), which gives a real common period between the sources.
 
 ## 5. Ingestion contracts
 
