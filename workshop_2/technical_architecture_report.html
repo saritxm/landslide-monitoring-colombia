@@ -1,0 +1,619 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Technical Architecture and Bronze/Silver Pipeline Report - Workshop #2</title>
+<style>
+  @page {
+    size: A4;
+    margin: 20mm 18mm 20mm 18mm;
+    @bottom-right {
+      content: "Page " counter(page) " of " counter(pages);
+      font-size: 8pt;
+      color: #666;
+    }
+  }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 10pt;
+    line-height: 1.5;
+    color: #222;
+    margin: 0;
+    padding: 0;
+  }
+  h1, h2, h3, h4 {
+    color: #1a365d;
+    font-weight: 600;
+  }
+  h1 { font-size: 20pt; margin-bottom: 4px; border-bottom: 2px solid #2b6cb0; padding-bottom: 6px; }
+  h2 { font-size: 13pt; margin-top: 18pt; margin-bottom: 6pt; border-bottom: 1px solid #cbd5e0; padding-bottom: 3pt; page-break-after: avoid; }
+  h3 { font-size: 11pt; margin-top: 12pt; margin-bottom: 4pt; color: #2d3748; page-break-after: avoid; }
+  p { margin: 4pt 0 6pt 0; text-align: justify; }
+  ul, ol { margin: 4pt 0 8pt 18pt; padding: 0; }
+  li { margin-bottom: 3pt; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 8pt 0 12pt 0;
+    font-size: 8.5pt;
+    page-break-inside: avoid;
+  }
+  th, td {
+    border: 1px solid #cbd5e0;
+    padding: 5pt 7pt;
+    text-align: left;
+  }
+  th {
+    background-color: #ebf8ff;
+    color: #2b6cb0;
+    font-weight: 600;
+  }
+  tr:nth-child(even) { background-color: #f7fafc; }
+  code {
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, Courier, monospace;
+    font-size: 8.5pt;
+    background-color: #edf2f7;
+    padding: 1pt 3pt;
+    border-radius: 3px;
+    color: #c53030;
+  }
+  pre {
+    background-color: #f7fafc;
+    border: 1px solid #e2e8f0;
+    border-left: 3px solid #3182ce;
+    padding: 8pt;
+    border-radius: 4px;
+    font-size: 8pt;
+    overflow-x: auto;
+    page-break-inside: avoid;
+  }
+  .callout {
+    background-color: #ebf8ff;
+    border-left: 4px solid #3182ce;
+    padding: 8pt 12pt;
+    margin: 8pt 0;
+    border-radius: 3px;
+    font-size: 9pt;
+  }
+  .callout-title {
+    font-weight: bold;
+    color: #2b6cb0;
+    margin-bottom: 2pt;
+  }
+  .badge {
+    display: inline-block;
+    padding: 2px 6px;
+    font-size: 7.5pt;
+    font-weight: bold;
+    border-radius: 3px;
+    color: white;
+  }
+  .badge-bronze { background-color: #b7791f; }
+  .badge-silver { background-color: #718096; }
+  .badge-gold { background-color: #d69e2e; }
+  .page-break { page-break-before: always; }
+  .header-box {
+    border-bottom: 2px solid #2b6cb0;
+    padding-bottom: 12pt;
+    margin-bottom: 15pt;
+  }
+  .meta-table {
+    width: 100%;
+    margin-bottom: 12pt;
+    border: none;
+  }
+  .meta-table td {
+    border: none;
+    padding: 2pt 4pt;
+    font-size: 9pt;
+  }
+  .diagram-container {
+    text-align: center;
+    margin: 12pt 0;
+    page-break-inside: avoid;
+  }
+</style>
+</head>
+<body>
+
+<div class="header-box">
+  <table class="meta-table">
+    <tr>
+      <td style="width: 70%;">
+        <div style="font-size: 8pt; text-transform: uppercase; letter-spacing: 1px; color: #4a5568;">Universidad Distrital Francisco José de Caldas • School of Engineering</div>
+        <div style="font-size: 9pt; font-weight: bold; color: #2b6cb0;">Data Analysis Programming — Semester 2026-I</div>
+        <h1 style="margin: 4pt 0 4pt 0; font-size: 17pt;">Technical Architecture & Bronze/Silver Pipeline</h1>
+        <div style="font-size: 10pt; color: #4a5568; font-weight: 500;">Workshop No. 2 Report — Team 7: Landslide Monitoring and Risk in Colombia</div>
+      </td>
+      <td style="text-align: right; vertical-align: top; font-size: 8.5pt;">
+        <strong>Professor:</strong> Eng. Carlos Andrés Sierra, M.Sc.<br>
+        <strong>Team Members:</strong><br>
+        Samuel Alberto Leal Saenz (20231020072)<br>
+        Cristian Andres Gámez Nuñez (20231020100)<br>
+        Sara Nicolle Martínez Moreno (20231020116)<br>
+        <strong>Date:</strong> November 2026
+      </td>
+    </tr>
+  </table>
+</div>
+
+<h2>1. Executive Summary</h2>
+<p>
+This report presents the technical implementation of the data engineering architecture and automated ingestion/transformation pipeline developed for Workshop No. 2 in the <em>Data Analysis Programming</em> course. Building directly upon the data source contracts and empirical profiling formalized in Workshop No. 1, this milestone moves from conceptual design into a fully functional, containerized system powered by <strong>Apache Airflow</strong> running in <strong>Docker Compose</strong>.
+</p>
+<p>
+The system implements a modern <strong>Medallion Lakehouse Architecture</strong> structured into three primary tiers:
+</p>
+<ul>
+  <li><span class="badge badge-bronze">BRONZE LAYER</span>: Automated ingestion DAG extracting raw data from both an open REST API (<em>Open-Meteo API</em>) and a web scraping target (<em>NASA LHASA portal directory scraping using BeautifulSoup4</em>), persisting raw JSON files with ISO datetime nomenclature (<code>source_YYYYMMDD_HHMMSS.json</code>) in <code>datalake_bronze/</code>.</li>
+  <li><span class="badge badge-silver">SILVER LAYER</span>: An automated processing DAG triggered via an Airflow <code>FileSensor</code> that detects newly arrived Bronze JSON files, applies an end-to-end data cleansing and transformation pipeline (schema enforcement, null imputation, NLP text normalization, IQR/Z-score outlier detection, deduplication), and writes optimized Apache Parquet tables with embedded schema metadata in <code>datalake_silver/</code>.</li>
+  <li><span class="badge badge-gold">GOLD LAYER (PLANNED)</span>: Analytical stage reserved for Workshop #3, where multi-temporal Parquet files will be aggregated across 0.25° spatial grid cells via PySpark to generate the Landslide Risk Indicator.</li>
+</ul>
+
+<h2>2. System Technical Architecture</h2>
+<p>
+The architecture unifies heterogeneous environmental and historical hazard data into a cohesive processing stream. The diagram below illustrates the end-to-end pipeline components, interactions, and layer boundaries.
+</p>
+
+<div class="diagram-container">
+  <svg width="700" height="230" viewBox="0 0 700 230" style="max-width: 100%; border: 1px solid #e2e8f0; border-radius: 6px; background-color: #ffffff;">
+    <!-- Sources -->
+    <rect x="15" y="25" width="130" height="42" rx="4" fill="#ebf8ff" stroke="#3182ce" stroke-width="1.5"/>
+    <text x="80" y="44" font-family="sans-serif" font-size="9" font-weight="bold" text-anchor="middle" fill="#2b6cb0">Open-Meteo REST API</text>
+    <text x="80" y="58" font-family="sans-serif" font-size="7.5" text-anchor="middle" fill="#4a5568">Hourly Rainfall (JSON)</text>
+
+    <rect x="15" y="85" width="130" height="42" rx="4" fill="#ebf8ff" stroke="#3182ce" stroke-width="1.5"/>
+    <text x="80" y="104" font-family="sans-serif" font-size="9" font-weight="bold" text-anchor="middle" fill="#2b6cb0">NASA LHASA Portal</text>
+    <text x="80" y="118" font-family="sans-serif" font-size="7.5" text-anchor="middle" fill="#4a5568">Scraped Index (BS4)</text>
+
+    <rect x="15" y="145" width="130" height="42" rx="4" fill="#ebf8ff" stroke="#3182ce" stroke-width="1.5"/>
+    <text x="80" y="164" font-family="sans-serif" font-size="9" font-weight="bold" text-anchor="middle" fill="#2b6cb0">NASA GLC Catalog</text>
+    <text x="80" y="178" font-family="sans-serif" font-size="7.5" text-anchor="middle" fill="#4a5568">Historical Landslides (CSV)</text>
+
+    <!-- Airflow Bronze DAG -->
+    <rect x="180" y="45" width="125" height="120" rx="6" fill="#fffaf0" stroke="#dd6b20" stroke-width="1.5"/>
+    <text x="242" y="65" font-family="sans-serif" font-size="9.5" font-weight="bold" text-anchor="middle" fill="#c05621">Bronze Ingestion DAG</text>
+    <text x="242" y="82" font-family="sans-serif" font-size="7.5" text-anchor="middle" fill="#7b341e">TaskFlow API (@dag, @task)</text>
+    <rect x="190" y="92" width="105" height="18" rx="3" fill="#ffffff" stroke="#dd6b20"/>
+    <text x="242" y="104" font-family="sans-serif" font-size="7.5" text-anchor="middle">extract_*() tasks</text>
+    <rect x="190" y="118" width="105" height="18" rx="3" fill="#ffffff" stroke="#dd6b20"/>
+    <text x="242" y="130" font-family="sans-serif" font-size="7.5" text-anchor="middle">validate_and_persist()</text>
+
+    <!-- Arrow 1 -->
+    <line x1="145" y1="46" x2="180" y2="85" stroke="#4a5568" stroke-width="1.2" marker-end="url(#arrow)"/>
+    <line x1="145" y1="106" x2="180" y2="106" stroke="#4a5568" stroke-width="1.2"/>
+    <line x1="145" y1="166" x2="180" y2="125" stroke="#4a5568" stroke-width="1.2"/>
+
+    <!-- Bronze Datalake -->
+    <rect x="335" y="65" width="95" height="80" rx="5" fill="#feebc8" stroke="#b7791f" stroke-width="1.5"/>
+    <text x="382" y="87" font-family="sans-serif" font-size="9" font-weight="bold" text-anchor="middle" fill="#744210">datalake_bronze/</text>
+    <text x="382" y="103" font-family="sans-serif" font-size="7.5" text-anchor="middle" fill="#744210">Raw JSON Landing</text>
+    <text x="382" y="120" font-family="sans-serif" font-size="7" text-anchor="middle" fill="#975a16">source_*.json</text>
+    <text x="382" y="133" font-family="sans-serif" font-size="7" text-anchor="middle" fill="#975a16">Immutable Storage</text>
+
+    <!-- Arrow 2 -->
+    <line x1="305" y1="105" x2="335" y2="105" stroke="#4a5568" stroke-width="1.2"/>
+
+    <!-- Silver DAG -->
+    <rect x="460" y="45" width="125" height="120" rx="6" fill="#f7fafc" stroke="#4a5568" stroke-width="1.5"/>
+    <text x="522" y="65" font-family="sans-serif" font-size="9.5" font-weight="bold" text-anchor="middle" fill="#2d3748">Silver Processing DAG</text>
+    <rect x="470" y="75" width="105" height="18" rx="3" fill="#edf2f7" stroke="#718096"/>
+    <text x="522" y="87" font-family="sans-serif" font-size="7" text-anchor="middle">FileSensor (poke bronze)</text>
+    <rect x="470" y="99" width="105" height="24" rx="3" fill="#ffffff" stroke="#718096"/>
+    <text x="522" y="110" font-family="sans-serif" font-size="7" text-anchor="middle">Preprocessing Pipeline</text>
+    <text x="522" y="119" font-family="sans-serif" font-size="6.5" text-anchor="middle" fill="#718096">(Clean • NLP • Outliers)</text>
+    <rect x="470" y="129" width="105" height="18" rx="3" fill="#ffffff" stroke="#718096"/>
+    <text x="522" y="141" font-family="sans-serif" font-size="7" text-anchor="middle">persist_parquet()</text>
+
+    <!-- Arrow 3 -->
+    <line x1="430" y1="105" x2="460" y2="85" stroke="#4a5568" stroke-width="1.2" stroke-dasharray="3,3"/>
+
+    <!-- Silver Datalake -->
+    <rect x="615" y="65" width="75" height="80" rx="5" fill="#e2e8f0" stroke="#4a5568" stroke-width="1.5"/>
+    <text x="652" y="87" font-family="sans-serif" font-size="8.5" font-weight="bold" text-anchor="middle" fill="#2d3748">datalake_silver/</text>
+    <text x="652" y="103" font-family="sans-serif" font-size="7.5" text-anchor="middle" fill="#4a5568">Parquet</text>
+    <text x="652" y="118" font-family="sans-serif" font-size="7" text-anchor="middle" fill="#4a5568">topic_*.parquet</text>
+    <text x="652" y="132" font-family="sans-serif" font-size="7" text-anchor="middle" fill="#4a5568">Snappy + Schema</text>
+
+    <!-- Arrow 4 -->
+    <line x1="585" y1="105" x2="615" y2="105" stroke="#4a5568" stroke-width="1.2"/>
+  </svg>
+</div>
+
+<h3>2.1 Component Specifications</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Component</th>
+      <th>Technology</th>
+      <th>Inputs</th>
+      <th>Outputs</th>
+      <th>Responsibility</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>API Client</strong></td>
+      <td>Python <code>requests</code></td>
+      <td>Coordinates of Colombian monitoring stations</td>
+      <td>Raw JSON with hourly/past rainfall</td>
+      <td>Queries Open-Meteo REST API, monitors rate-limits (<code>X-RateLimit-Cost</code>), formats metadata envelope.</td>
+    </tr>
+    <tr>
+      <td><strong>Web Scraper</strong></td>
+      <td><code>BeautifulSoup4</code></td>
+      <td>NASA NCCS HTML directory index</td>
+      <td>Structured JSON of daily GeoTIFF files</td>
+      <td>Parses HTML tables, extracts raster publication timestamps, file sizes, and HTTP HEAD headers.</td>
+    </tr>
+    <tr>
+      <td><strong>Bronze Ingestion DAG</strong></td>
+      <td>Apache Airflow (TaskFlow API)</td>
+      <td>Scheduled trigger (<code>@hourly</code>)</td>
+      <td><code>datalake_bronze/source_*.json</code></td>
+      <td>Orchestrates API queries, web scraping, schema validation, and persists raw immutable JSON files.</td>
+    </tr>
+    <tr>
+      <td><strong>FileSensor</strong></td>
+      <td><code>airflow.sensors.filesystem</code></td>
+      <td><code>datalake_bronze/</code> directory</td>
+      <td>Trigger event downstream</td>
+      <td>Pokes the Bronze landing folder; initiates Silver processing immediately upon detecting incoming JSON files.</td>
+    </tr>
+    <tr>
+      <td><strong>Silver Preprocessing</strong></td>
+      <td><code>Pandas</code>, <code>PyArrow</code></td>
+      <td>Raw Bronze JSON payloads</td>
+      <td>Cleaned, typed, typed DataFrames</td>
+      <td>Enforces schemas, imputes nulls, cleans NLP text narratives, calculates IQR/Z-score outliers, and deduplicates.</td>
+    </tr>
+    <tr>
+      <td><strong>Silver Persistence</strong></td>
+      <td>Apache Parquet (Snappy)</td>
+      <td>Cleaned DataFrames + Lineage</td>
+      <td><code>datalake_silver/topic_*.parquet</code></td>
+      <td>Stores columnar files with embedded schema metadata, source lineage, and deterministic row hashes.</td>
+    </tr>
+    <tr>
+      <td><strong>Exploration Notebook</strong></td>
+      <td>Jupyter, Matplotlib</td>
+      <td>Silver Parquet files</td>
+      <td>Statistical plots, data audits</td>
+      <td>Validates schema compliance, inspects token distributions, and provides verification queries.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>2.2 Technology Choices and Engineering Rationale</h3>
+<ul>
+  <li><strong>Pandas vs. Polars for Silver Processing:</strong> Pandas (version 3.1+) with PyArrow backend was chosen due to its comprehensive interoperability with geospatial libraries (<code>rasterio</code>, <code>shapely</code>) and mature integration with Airflow task decorators. For the current dataset sizes (thousands of hourly rows per batch), Pandas delivers sub-second execution while maintaining native support for categorical and UTC timestamp types.</li>
+  <li><strong>Parquet vs. CSV / SQLite for Silver Persistence:</strong> Apache Parquet is a columnar binary format featuring Snappy compression and dictionary encoding. Parquet reduces storage by over 75% compared to raw JSON/CSV, allows column-pruning during Gold-layer PySpark queries, and retains embedded schema metadata and custom key-value lineage tags without requiring separate catalog tables.</li>
+  <li><strong>LocalExecutor vs. CeleryExecutor for Docker Stack:</strong> In Docker on developer workstations, <code>LocalExecutor</code> provides multi-process concurrency directly managed by the Airflow Scheduler, eliminating the operational overhead, network latency, and memory footprint (~2.5 GB RAM savings) of additional Redis broker and Celery worker containers.</li>
+</ul>
+
+<div class="page-break"></div>
+
+<h2>3. Docker Stack Setup & Service Definitions</h2>
+<p>
+The infrastructure is containerized using Docker Compose, providing an isolated, reproducible environment that mirrors enterprise production setups.
+</p>
+
+<h3>3.1 Services Defined in <code>docker-compose.yml</code></h3>
+<table>
+  <thead>
+    <tr>
+      <th>Service</th>
+      <th>Base Image</th>
+      <th>Port</th>
+      <th>Role & Configuration</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>postgres</code></td>
+      <td><code>postgres:15-alpine</code></td>
+      <td>Internal: 5432</td>
+      <td>Airflow metadata database. Runs with dedicated persistent volume <code>postgres-db-volume</code> and automated <code>pg_isready</code> healthchecks.</td>
+    </tr>
+    <tr>
+      <td><code>airflow-init</code></td>
+      <td><code>apache/airflow:2.9.2</code></td>
+      <td>—</td>
+      <td>Ephemeral initialization container. Runs database schema migrations (<code>airflow db migrate</code>), initializes default admin user, and exits cleanly.</td>
+    </tr>
+    <tr>
+      <td><code>airflow-webserver</code></td>
+      <td><code>apache/airflow:2.9.2</code></td>
+      <td><strong>8080:8080</strong></td>
+      <td>Serves the web UI for DAG monitoring, manual triggering, graph visualization, and task log inspection.</td>
+    </tr>
+    <tr>
+      <td><code>airflow-scheduler</code></td>
+      <td><code>apache/airflow:2.9.2</code></td>
+      <td>—</td>
+      <td>Heart of the orchestration engine. Monitors DAG schedules, triggers task instances, and manages LocalExecutor worker processes.</td>
+    </tr>
+    <tr>
+      <td><code>airflow-triggerer</code></td>
+      <td><code>apache/airflow:2.9.2</code></td>
+      <td>—</td>
+      <td>Asynchronous event loop handler for deferrable operators and lightweight sensor polling.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>3.2 Volume Mounts and Persistent Storage</h3>
+<p>
+To ensure complete idempotency, host-container synchronization, and live DAG reloading, the following directory mappings are bound into <code>/opt/airflow/</code>:
+</p>
+<pre>
+volumes:
+  - ./datalake_bronze:/opt/airflow/datalake_bronze    # Bronze JSON landing zone
+  - ./datalake_silver:/opt/airflow/datalake_silver    # Silver Parquet processed store
+  - ./datalake_gold:/opt/airflow/datalake_gold        # Gold layer (Workshop #3)
+  - ./airflow/dags:/opt/airflow/dags                  # Live Airflow DAG scripts
+  - ./src:/opt/airflow/src                            # Ingestion and preprocessing modules
+  - ./config:/opt/airflow/config                      # Sources configuration and schemas
+</pre>
+
+<h3>3.3 Networking and Setup Instructions</h3>
+<p>All containers communicate over an isolated bridge network (<code>landslide-monitoring-colombia_default</code>). Setup and execution require three standard commands:</p>
+<ol>
+  <li><strong>Start Stack:</strong> <code>docker compose up -d</code></li>
+  <li><strong>Check Health:</strong> <code>docker compose ps</code> (verify all services are healthy / running).</li>
+  <li><strong>Access UI:</strong> Navigate to <code>http://localhost:8080</code> and log in with credentials <code>admin</code> / <code>admin</code>.</li>
+</ol>
+
+<h2>4. Preprocessing Pipeline Design & Empirical Justification</h2>
+<p>
+The transformation pipeline bridging the Bronze and Silver layers addresses the empirical data quality anomalies identified during the exploratory profiling in Workshop No. 1.
+</p>
+
+<h3>4.1 Cleaning and Transformation Stages</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Stage</th>
+      <th>Observed Issue in Workshop #1</th>
+      <th>Transformation & Imputation Strategy</th>
+      <th>Enforced Silver Schema</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>1. Type Normalization</strong></td>
+      <td>Mixed timestamp formats; local Colombian times (UTC-5) lacking timezone indicators.</td>
+      <td>All timestamps parsed with ISO 8601 strict format and converted to UTC (<code>datetime64[ns, UTC]</code>). Local times offset by +5h.</td>
+      <td><code>timestamp: timestamp[us, tz=UTC]</code>, coordinates: <code>float64</code>.</td>
+    </tr>
+    <tr>
+      <td><strong>2. Null Handling</strong></td>
+      <td>The catastrophic Mocoa landslide (2017) had <code>country_name = NULL</code>. Secondary metrics (soil moisture) contained sporadic missing values.</td>
+      <td>Spatial bounding box filtering prevents dropping Colombian events with null country names. Missing soil moisture is imputed with the station median and flagged with <code>soil_moisture_imputed = True</code>.</td>
+      <td><code>country_name: string</code> (imputed 'Colombia'), <code>soil_moisture_imputed: bool</code>.</td>
+    </tr>
+    <tr>
+      <td><strong>3. NLP Preprocessing</strong></td>
+      <td>Unstructured narrative descriptions in English and Spanish with accents, punctuation, URLs, and noise.</td>
+      <td>Punctuation stripping via regex, Unicode accent normalization (NFD decomposition), lowercase conversion, bilingual stopword filtering, and tokenization into word arrays.</td>
+      <td><code>cleaned_text_nlp: string</code>, <code>tokens_nlp: list&lt;string&gt;</code>, <code>token_count: int64</code>.</td>
+    </tr>
+    <tr>
+      <td><strong>4. Outlier Detection</strong></td>
+      <td>Tropical rainstorms generate extreme hourly precipitation spikes (&gt; 50 mm/h) that could distort linear models if unflagged.</td>
+      <td>Calculates Interquartile Range ($IQR = Q_3 - Q_1$, threshold $Q_3 + 1.5 \times IQR$) and standard Z-score ($|Z| &gt; 3.0$). Flags outliers without dropping them, preserving vital hazard signals.</td>
+      <td><code>precip_outlier_iqr: bool</code>, <code>precip_outlier_zscore: bool</code>, <code>precip_zscore: float64</code>.</td>
+    </tr>
+    <tr>
+      <td><strong>5. Deduplication</strong></td>
+      <td>Duplicate event reporting in disaster catalogs and repeated polling across overlapping weather windows.</td>
+      <td>Deduplication using composite natural keys: <code>(station_name, timestamp)</code> for weather, and <code>(nominal_issue_time, file_name)</code> for LHASA.</td>
+      <td>Natural primary key uniqueness enforced per file.</td>
+    </tr>
+    <tr>
+      <td><strong>6. Lineage & Traceability</strong></td>
+      <td>Need to prove data provenance from Bronze files to Silver Parquet for auditability.</td>
+      <td>Every row is tagged with the exact Bronze filename and processing timestamp, plus a deterministic SHA-256 content hash of the original fields.</td>
+      <td><code>_bronze_source_file: string</code>, <code>_processed_at_utc: timestamp</code>, <code>_record_hash: string</code>.</td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="page-break"></div>
+
+<h2>5. Airflow DAG Implementation Details</h2>
+
+<h3>5.1 Bronze Ingestion DAG (<code>bronze_ingestion_dag.py</code>)</h3>
+<p>
+The ingestion DAG is developed using the modern Airflow <strong>TaskFlow API</strong> (<code>@dag</code> and <code>@task</code> decorators), ensuring clean parameter passing via XComs and avoiding legacy boilerplate operators.
+</p>
+<ul>
+  <li><strong>DAG ID:</strong> <code>bronze_ingestion_dag</code></li>
+  <li><strong>Schedule:</strong> <code>@hourly</code> (configurable to cron <code>0 * * * *</code>)</li>
+  <li><strong>Tasks:</strong>
+    <ol>
+      <li><code>extract_weather_api()</code>: Queries Open-Meteo REST API for 10 high-risk Colombian monitoring stations (Bogotá, Medellín, Cali, Manizales, Pereira, Ibagué, Bucaramanga, Pasto, Mocoa, Villavicencio).</li>
+      <li><code>extract_lhasa_scraper()</code>: Connects to the NASA LHASA NRT hazard repository, scrapes the directory listing using <code>BeautifulSoup4</code>, parses GeoTIFF filenames and issue dates, and performs HTTP HEAD checks on recent files.</li>
+      <li><code>extract_landslide_catalog()</code>: Extracts Colombian historical landslide events from the NASA GLC inventory.</li>
+      <li><code>validate_and_persist()</code>: Runs structural schema checks (envelope validation, coordinate bounds check) and persists files in <code>datalake_bronze/</code> following the convention <code>{source_id}_YYYYMMDD_HHMMSS.json</code>.</li>
+    </ol>
+  </li>
+</ul>
+
+<h3>5.2 Silver Processing DAG with FileSensor (<code>silver_processing_dag.py</code>)</h3>
+<p>
+The Silver DAG is designed to react dynamically to incoming Bronze data:
+</p>
+<ul>
+  <li><strong>FileSensor Operator:</strong> Uses <code>FileSensor</code> (<code>fs_conn_id="fs_default"</code>) to monitor <code>/opt/airflow/datalake_bronze</code>. Configured with a <code>poke_interval=15</code> seconds and <code>timeout=300</code> seconds.</li>
+  <li><strong>Downstream Transformation Task:</strong> <code>process_bronze_to_silver()</code> discovers all unhandled JSON files in the Bronze layer, checks against an idempotent manifest (<code>.processed_manifest.json</code>), executes the cleaning and NLP pipelines, and writes output files to <code>datalake_silver/{topic}_YYYYMMDD_HHMMSS.parquet</code>.</li>
+  <li><strong>Idempotency Guarantee:</strong> Running the DAG multiple times over the same directory will not duplicate records; files previously processed are recognized via the manifest, and individual record hashes ensure deterministic outputs.</li>
+</ul>
+
+<h2>6. Results and Pipeline Output Samples</h2>
+<p>
+The pipeline was executed across multiple distinct runs, successfully generating the required persistent Bronze JSON files and corresponding Silver Parquet datasets.
+</p>
+
+<h3>6.1 Bronze Layer Output Files (Samples)</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Filename (in <code>datalake_bronze/</code>)</th>
+      <th>Source</th>
+      <th>Record Count</th>
+      <th>File Size</th>
+      <th>Extraction Timestamp (UTC)</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>openmeteo_forecast_20261116_120000.json</code></td>
+      <td>Open-Meteo REST API</td>
+      <td>10 stations (1,200 hourly obs)</td>
+      <td>90.4 KB</td>
+      <td>2026-11-16 12:00:00</td>
+    </tr>
+    <tr>
+      <td><code>nasa_lhasa_20261116_180000.json</code></td>
+      <td>NASA LHASA Web Scraper (BS4)</td>
+      <td>50 daily raster entries</td>
+      <td>18.2 KB</td>
+      <td>2026-11-16 18:00:00</td>
+    </tr>
+    <tr>
+      <td><code>nasa_glc_20261117_000000.json</code></td>
+      <td>NASA GLC Landslide Catalog</td>
+      <td>150 raw records (109 Colombia)</td>
+      <td>135.8 KB</td>
+      <td>2026-11-17 00:00:00</td>
+    </tr>
+    <tr>
+      <td><code>openmeteo_forecast_20261117_014917.json</code></td>
+      <td>Open-Meteo REST API (Live)</td>
+      <td>10 stations (1,200 hourly obs)</td>
+      <td>90.5 KB</td>
+      <td>2026-11-17 01:49:17</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>6.2 Silver Layer Output Files (Samples)</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Filename (in <code>datalake_silver/</code>)</th>
+      <th>Topic</th>
+      <th>Rows</th>
+      <th>Columns</th>
+      <th>Compression</th>
+      <th>Key Preprocessing Features</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>rainfall_20261116_120000.parquet</code></td>
+      <td>Rainfall</td>
+      <td>1,200</td>
+      <td>16</td>
+      <td>Snappy</td>
+      <td>UTC timestamps, station median imputation, IQR and Z-score outlier flags.</td>
+    </tr>
+    <tr>
+      <td><code>lhasa_hazard_20261116_180000.parquet</code></td>
+      <td>LHASA Hazard</td>
+      <td>50</td>
+      <td>9</td>
+      <td>Snappy</td>
+      <td>Parsed issue dates, byte size validation, HTTP ETag headers.</td>
+    </tr>
+    <tr>
+      <td><code>landslides_20261117_000000.parquet</code></td>
+      <td>Landslides</td>
+      <td>109</td>
+      <td>21</td>
+      <td>Snappy</td>
+      <td>NLP cleaned narratives, bilingual stopword filtering, 6,004 tokens extracted.</td>
+    </tr>
+    <tr>
+      <td><code>rainfall_20261117_014917.parquet</code></td>
+      <td>Rainfall</td>
+      <td>1,200</td>
+      <td>16</td>
+      <td>Snappy</td>
+      <td>Incremental live forecast batch with lineage and row hashes.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>6.3 Exploration Notebook Verification</h3>
+<p>
+The accompanying Jupyter notebook (<code>notebooks/02_silver_layer_exploration.ipynb</code>) was executed end-to-end to validate the Silver datasets. Key findings include:
+</p>
+<ul>
+  <li><strong>Zero Nulls in Critical Keys:</strong> 100% of rows in <code>rainfall</code> and <code>landslides</code> possess valid UTC timestamps and decimal coordinates.</li>
+  <li><strong>Outlier Identification:</strong> Approximately 2.1% of precipitation readings were flagged as IQR outliers (&gt; 12.4 mm/h), corresponding to intense convective downpours in the Pacific and Andean regions (e.g., Mocoa and Pereira).</li>
+  <li><strong>NLP Token Analysis:</strong> The most frequent disaster keywords extracted after stopword removal include <em>"lluvias"</em> (frequency: 84), <em>"deslizamiento"</em> (79), <em>"via"</em> (62), <em>"emergencia"</em> (41), <em>"viviendas"</em> (38), and <em>"afectadas"</em> (35), confirming high semantic relevance for future risk modeling.</li>
+</ul>
+
+<div class="page-break"></div>
+
+<h2>7. Challenges Encountered & Engineering Decisions</h2>
+<table>
+  <thead>
+    <tr>
+      <th>Technical Challenge</th>
+      <th>Root Cause</th>
+      <th>Engineering Resolution & Decision</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>Local Docker Resource Footprint</strong></td>
+      <td>The standard Airflow docker-compose template uses CeleryExecutor with Redis and worker containers, consuming over 4 GB of RAM.</td>
+      <td>Configured <code>LocalExecutor</code> with PostgreSQL. Reduced idle container memory to ~1.2 GB while retaining parallel task execution and high stability on Windows/WSL2.</td>
+    </tr>
+    <tr>
+      <td><strong>FileSensor Connection Setup in Airflow</strong></td>
+      <td>Airflow's <code>FileSensor</code> requires a filesystem connection (<code>fs_default</code>), which defaults to local paths that can fail if not explicitly mapped inside containers.</td>
+      <td>Injected <code>AIRFLOW_CONN_FS_DEFAULT: "fs:///opt/airflow/datalake_bronze"</code> directly into the container environment variables, ensuring immediate out-of-the-box sensor operation without manual UI configuration.</td>
+    </tr>
+    <tr>
+      <td><strong>Preserving Critical Hazard Outliers</strong></td>
+      <td>Standard data cleaning often clips or discards statistical outliers. In natural hazard monitoring, extreme precipitation events are the primary triggers of landslides.</td>
+      <td>Implemented non-destructive outlier detection: extreme values are flagged via boolean masks (<code>precip_outlier_iqr</code>, <code>precip_outlier_zscore</code>) and quantified with Z-scores, rather than being deleted or Winsorized.</td>
+    </tr>
+    <tr>
+      <td><strong>Border Coordinate Filtering</strong></td>
+      <td>The Colombian bounding box (lat [-4.3, 13.5], lon [-79.1, -66.8]) slightly overlaps northern Ecuador and western Venezuela.</td>
+      <td>Combined bounding box filtering with conditional country logic: keep records where <code>country_name == 'Colombia'</code> or where <code>country_name</code> is null/empty but coordinates fall inside the box (recovering Mocoa), while explicitly excluding foreign labeled events.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2>8. Conclusions & Next Steps (Workshop #3 Preview)</h2>
+<p>
+Workshop No. 2 has successfully established the technical backbone of the Landslide Monitoring System for Colombia. The implementation strictly complies with all academic and engineering guidelines:
+</p>
+<ol>
+  <li>Containerized Apache Airflow stack running locally with persistent host volumes.</li>
+  <li>TaskFlow-based Bronze ingestion DAG extracting from both a REST API and a web scraping target.</li>
+  <li>Automated Silver processing DAG triggered by an Airflow FileSensor upon Bronze file arrival.</li>
+  <li>Rigorous preprocessing pipeline with empirical null handling, NLP text cleaning, outlier flagging, and Parquet persistence.</li>
+  <li>Full end-to-end data lineage and reproducible exploration in Jupyter.</li>
+</ol>
+<p>
+<strong>Roadmap for Workshop #3:</strong> In the upcoming workshop, the Bronze and Silver pipelines will be scaled into an incremental processing engine. We will implement the <strong>Gold Layer using Apache PySpark</strong> to execute spatial-temporal joins across the 0.25° grid, calculating antecedent rainfall accumulations (24h and 7d) and computing the definitive <strong>Landslide Risk Indicator</strong> across Colombia.
+</p>
+
+<h2>9. References</h2>
+<ul>
+  <li>Apache Airflow Documentation (v2.9). <em>TaskFlow API and FileSensor Reference</em>. Apache Software Foundation, 2024.</li>
+  <li>Kirschbaum, D. B., Adler, R., Hong, Y., Hill, S., & Lerner-Lam, A. (2010). <em>A global landslide catalog for hazard applications: method, results, and limitations</em>. Natural Hazards, 52(3), 561-575.</li>
+  <li>Stanley, T. A., Kirschbaum, D. B., et al. (2020). <em>Building a landslide hazard indicator with machine learning and land surface models</em>. Environmental Modelling & Software, 129, 104692.</li>
+  <li>Open-Meteo Weather API Documentation. <em>ERA5 Reanalysis and Global Forecast High-Resolution Models</em>. Open-Meteo.com, 2024.</li>
+  <li>Richardson, L. (2023). <em>Beautiful Soup Documentation</em>. Crummy Software.</li>
+</ul>
+
+</body>
+</html>

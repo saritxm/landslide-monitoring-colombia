@@ -1,22 +1,17 @@
 # Landslide Monitoring and Risk — Colombia
 
-Data Analysis Programming, Semester 2026-II — Universidad Distrital Francisco José de Caldas
+Data Analysis Programming, Semester 2026-I — Universidad Distrital Francisco José de Caldas  
 Team 7 — Professor: Eng. Carlos Andrés Sierra, M.Sc.
 
-## Hazard
+## Hazard & Domain Context
 
-Landslides are downslope movements of soil, rock, and debris. In Colombia, most of them are
-triggered by intense or prolonged rainfall on the steep slopes of the Andean region. This
-system integrates a historical landslide inventory with historical and current rainfall to
-identify areas where present conditions resemble those that preceded past landslides.
+Landslides (mass movements) in Colombia are predominantly triggered by intense or prolonged rainfall on steep slopes across the Andean and Pacific regions. This system integrates historical landslide inventories with historical and real-time precipitation models and satellite hazard rasters to calculate a regional **Landslide Risk Indicator**.
 
-The output is a **Landslide Risk Indicator per region**. It is a monitoring and correlation
-aid, **not a prediction** of landslides.
+- **Geographic scope:** Colombia (Bounding Box: lat −4.3 to 13.5, lon −79.1 to −66.8)
+- **Historical window:** Landslides 2007–2017 (NASA GLC catalog); rainfall 2007–present (ERA5 reanalysis)
+- **Incremental window:** Open-Meteo real-time forecast and NASA LHASA NRT hazard rasters
 
-- **Geographic scope:** Colombia (approx. lat −4.3 to 13.5, lon −79.1 to −66.8)
-- **Historical window:** landslides 2007–2017 (the NASA catalog ends in September 2017); rainfall 2007–present
-
-## Team
+## Team 7 Members
 
 | Student ID | Name |
 |---|---|
@@ -24,57 +19,114 @@ aid, **not a prediction** of landslides.
 | 20231020100 | Cristian Andres Gámez Nuñez |
 | 20231020116 | Sara Nicolle Martínez Moreno |
 
-## Data sources
+---
 
-Validated with real queries on 2026-11-07 (evidence in `workshop_1/samples/`):
+## Technical Architecture (Medallion Lakehouse)
 
-| Role | Source | Format | Key needed |
-|---|---|---|---|
-| Historical 1 | NASA Global Landslide Catalog | CSV (bulk file) | No |
-| Historical 2 | Open-Meteo Historical Weather API (ERA5) | JSON REST | No |
-| Incremental 1 | Open-Meteo Forecast API | JSON REST | No |
-| Incremental 2 | NASA LHASA landslide nowcast (NRT v2) | GeoTIFF raster (daily) | No |
-
-Changes detected in the sources are recorded in `docs/source_status_log.md`.
-
-Licenses and attribution requirements are recorded in `config/sources.yaml`.
-
-## Repository structure
+The project implements a modern Medallion Architecture orchestrated via Apache Airflow running in Docker Compose:
 
 ```
-src/              ingestion package (sources, normalization, storage)
-ingest.py         command-line entry point (stub in Workshop #1)
-config/           sources.yaml: one entry per source
-data/raw/         raw landing zone (git-ignored except small samples)
-sql/              schema definitions
-dashboard/        Plotly Dash application
-tests/            tests; tests/fixtures/ holds recorded sample responses
-notebooks/        profiling and analysis notebooks
-docs/             documentation and diagrams
-workshop_1/       Workshop #1 deliverables (samples, mapping)
+[ Open-Meteo API ]      [ NASA LHASA Scraper ]      [ NASA GLC Catalog ]
+        │                         │                          │
+        └─────────────────────────┼──────────────────────────┘
+                                  ▼
+                     [ bronze_ingestion_dag ] (Airflow TaskFlow API)
+                                  │
+                                  ▼
+                   datalake_bronze/source_YYYYMMDD_HHMMSS.json
+                                  │
+                                  ▼
+                   [ FileSensor: poke datalake_bronze ]
+                                  │
+                                  ▼
+                     [ silver_processing_dag ]
+         (Schema Enforcement · Null Imputation · NLP Normalization · IQR/Z-score Outliers)
+                                  │
+                                  ▼
+                   datalake_silver/topic_YYYYMMDD_HHMMSS.parquet
+                                  │
+                                  ▼
+                   datalake_gold/ (Planned - Workshop #3 PySpark)
 ```
 
-## Workshop #1 deliverables
+1. **Bronze Layer (`datalake_bronze/`):** Immutable landing zone storing raw JSON payloads with datetime nomenclature (`source_YYYYMMDD_HHMMSS.json`).
+2. **Silver Layer (`datalake_silver/`):** Cleaned, typed, and standardized Parquet tables (`topic_YYYYMMDD_HHMMSS.parquet`) with Snappy compression, bilingual NLP text normalization on landslide narratives, statistical outlier flags, and end-to-end data lineage.
+3. **Gold Layer (`datalake_gold/`):** Planned for Workshop #3 (PySpark spatial-temporal joins on a 0.25° grid to compute the Landslide Risk Indicator).
 
-- `docs/technical_report.pdf` — Project Definition Technical Report
-- `notebooks/01_source_profiling.ipynb` — source profiling, executed with outputs
-- `workshop_1/samples/` — raw responses kept as received (large files: `python workshop_1/download_samples.py`)
-- `workshop_1/mapping.md` — canonical mapping, domain tables, ingestion contracts and ER diagram
-- `docs/er_diagram.png`, `docs/source_status_log.md`
+---
 
-## Setup
+## Repository Structure
 
+```
+├── airflow/
+│   └── dags/
+│       ├── bronze_ingestion_dag.py        # TaskFlow API ingestion DAG
+│       └── silver_processing_dag.py        # FileSensor-triggered Silver transformation DAG
+├── config/
+│   └── sources.yaml                       # Formal declarative source contract
+├── datalake_bronze/                       # Bronze raw JSON landing files
+├── datalake_silver/                       # Silver standardized Parquet files
+├── datalake_gold/                         # Gold analytical layer (Workshop #3)
+├── notebooks/
+│   ├── 01_source_profiling.ipynb          # Workshop #1 data profiling & Prophet experiment
+│   └── 02_silver_layer_exploration.ipynb  # Workshop #2 Parquet exploration & data audits
+├── scripts/
+│   ├── generate_pipeline_samples.py       # Offline/testing pipeline execution script
+│   └── create_exploration_notebook.py     # Notebook generator
+├── src/
+│   ├── sources/                           # API client (Open-Meteo), Scraper (BS4), GLC loader
+│   ├── preprocessing/                     # Cleaning, NLP normalizer, Outliers, Parquet writer
+│   └── validation/                        # Bronze payload schema validator
+├── tests/
+│   ├── test_workshop1.py                  # Workshop #1 automated tests
+│   └── test_workshop2.py                  # Workshop #2 automated tests (ingestion, NLP, Parquet)
+├── workshop_1/                            # Workshop #1 deliverables (samples, mapping)
+├── workshop_2/                            # Workshop #2 deliverables (report PDF, HTML)
+│   └── technical_architecture_report.pdf
+├── docker-compose.yml                     # Airflow containerized stack definition
+├── Dockerfile                             # Custom Airflow image with Python dependencies
+└── requirements.txt                       # Project Python requirements
+```
+
+---
+
+## Quickstart & Docker Setup
+
+### Prerequisites
+- Docker Desktop (active and running)
+- Python 3.11+ (for local scripts and Jupyter)
+
+### 1. Launch Airflow in Docker
 ```bash
-python -m venv .venv
-source .venv/bin/activate        # Windows: .venv\Scripts\activate
+docker compose up -d
+```
+Verify all containers are healthy:
+```bash
+docker compose ps
+```
+Services started:
+- `postgres`: PostgreSQL 15 metadata database.
+- `airflow-init`: Automatic DB migration and admin user creation.
+- `airflow-webserver`: Web UI accessible at `http://localhost:8080` (`admin` / `admin`).
+- `airflow-scheduler`: Task scheduler and LocalExecutor runner.
+- `airflow-triggerer`: Async sensor/trigger handler.
+
+### 2. Run the Airflow DAGs
+Open `http://localhost:8080`:
+1. Unpause `bronze_ingestion_dag` and trigger a run. It queries Open-Meteo, scrapes NASA LHASA, validates payloads, and writes JSON files to `datalake_bronze/`.
+2. `silver_processing_dag` detects new files in `datalake_bronze/` via its `FileSensor`, applies the preprocessing pipeline, and outputs Parquet files to `datalake_silver/`.
+
+### 3. Local Environment & Automated Testing
+```bash
+# Activate virtual environment
+.venv\Scripts\activate
+
+# Install requirements
 pip install -r requirements.txt
-cp .env.example .env
+
+# Run all test suites
+pytest tests/ -v
 ```
 
-## Usage (contract; implemented from Workshop #2)
-
-```bash
-python ingest.py --mode historical --start 2007-01-01 --end 2026-11-06
-python ingest.py --mode incremental
-python ingest.py --mode status
-```
+### 4. Explore Silver Parquet Files
+Open `notebooks/02_silver_layer_exploration.ipynb` in Jupyter or VS Code to inspect the schema, NLP token frequencies, and outlier distributions.
