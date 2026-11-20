@@ -61,6 +61,13 @@ def validate_bronze_payload(payload: Dict[str, Any], expected_source: str) -> Tu
             if "file_name" not in item or "url" not in item:
                 errors.append(f"Item #{idx} missing file_name or url")
 
+    elif expected_source == "openmeteo_era5" and isinstance(data, list):
+        for idx, item in enumerate(data[:5]):
+            if "returned_latitude" not in item or "returned_longitude" not in item:
+                errors.append(f"Item #{idx} missing returned latitude/longitude")
+            if "daily" not in item:
+                errors.append(f"Item #{idx} missing daily section")
+
     is_valid = len(errors) == 0
     if not is_valid:
         logger.warning("Bronze payload validation errors: %s", errors)

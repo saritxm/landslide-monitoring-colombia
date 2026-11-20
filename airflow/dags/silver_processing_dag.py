@@ -37,21 +37,22 @@ if not SILVER_DIR.exists():
 def silver_processing_pipeline():
     """Defines the Silver processing pipeline triggered by FileSensor."""
 
-    # FileSensor watching the Bronze directory
+    # FileSensor watching the Bronze directory for ready batch flag
     sensor_detect_bronze_file = FileSensor(
         task_id="sensor_detect_bronze_file",
-        filepath=".",
+        filepath="_READY.flag",
         fs_conn_id="fs_default",
-        poke_interval=15,
+        poke_interval=30,
         timeout=300,
-        mode="poke",
-        soft_fail=False,
+        mode="reschedule",
+        soft_fail=True,
     )
 
     @task()
     def process_bronze_to_silver() -> List[Dict[str, Any]]:
         """Processes any new/unprocessed Bronze JSON files into Silver Parquet."""
         from src.preprocessing.cleaning import (
+            transform_era5_to_silver,
             transform_glc_to_silver,
             transform_lhasa_to_silver,
             transform_weather_to_silver,
@@ -88,7 +89,10 @@ def silver_processing_pipeline():
             source_id = meta.get("source_id", "")
 
             # Dispatch to appropriate transformation pipeline
-            if "openmeteo" in source_id or "openmeteo" in file_name:
+            if "era5" in source_id or "era5" in file_name:
+                df, stats = transform_era5_to_silver(payload, file_name)
+                topic = "rainfall_historical"
+            elif "openmeteo" in source_id or "openmeteo" in file_name:
                 df, stats = transform_weather_to_silver(payload, file_name)
                 topic = "rainfall"
             elif "lhasa" in source_id or "lhasa" in file_name:
@@ -126,9 +130,10 @@ def silver_processing_pipeline():
                 "stats": stats,
             })
 
-        # Save updated manifest
+        # Save updated manifest and clear trigger flag
         manifest_path.write_text(json.dumps(sorted(list(processed_files)), indent=2), encoding="utf-8")
-        logger.info("Finished processing. Generated %d Silver files.", len(processed_outputs))
+        (BRONZE_DIR / "_READY.flag").unlink(missing_ok=True)
+        logger.info("Cleared _READY.flag. Finished processing. Generated %d Silver files.", len(processed_outputs))
         return processed_outputs
 
     # Sensor triggers processing

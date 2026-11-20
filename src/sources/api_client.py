@@ -10,6 +10,8 @@ import json
 import logging
 from typing import Any, Dict, List, Optional
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util import Retry
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +45,16 @@ class OpenMeteoClient:
         self.base_url = base_url
         self.headers = {"User-Agent": user_agent, "Accept": "application/json"}
         self.timeout = timeout
+        self.session = requests.Session()
+        retry_strategy = Retry(
+            total=3,
+            backoff_factor=1,
+            status_forcelist=[429, 500, 502, 503, 504],
+            raise_on_status=False,
+        )
+        adapter = HTTPAdapter(max_retries=retry_strategy)
+        self.session.mount("https://", adapter)
+        self.session.mount("http://", adapter)
 
     def fetch_forecast_batch(
         self,
@@ -79,7 +91,7 @@ class OpenMeteoClient:
         query_time = datetime.now(timezone.utc)
         logger.info("Querying Open-Meteo API for %d locations in Colombia...", len(locations))
 
-        response = requests.get(
+        response = self.session.get(
             self.base_url,
             params=params,
             headers=self.headers,

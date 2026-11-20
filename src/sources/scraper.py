@@ -125,6 +125,38 @@ class LhasaScraper:
             except Exception as e:
                 logger.debug("HEAD request failed for %s: %s", item["file_name"], e)
 
+        # Extract station-level raster hazard statistics for the latest available raster
+        station_hazards = []
+        if selected_files:
+            latest = selected_files[0]
+            latest_url = latest.get("url")
+            nominal_time = latest.get("nominal_issue_time")
+            try:
+                from src.sources.lhasa_raster import extract_station_hazard_stats
+                from src.sources.api_client import MONITORING_LOCATIONS
+                logger.info("Attempting /vsicurl/ hazard stats extraction for %s...", latest.get("file_name"))
+                station_hazards = extract_station_hazard_stats(
+                    latest_url,
+                    stations=MONITORING_LOCATIONS,
+                    nominal_issue_time=nominal_time,
+                )
+            except Exception as err:
+                logger.info("Live /vsicurl/ extraction unavailable (%s). Checking local sample fallback...", err)
+                from pathlib import Path
+                sample_tifs = sorted(Path("workshop_1/samples").glob("lhasa_colombia_*.tif"))
+                if sample_tifs:
+                    try:
+                        from src.sources.lhasa_raster import extract_station_hazard_stats
+                        from src.sources.api_client import MONITORING_LOCATIONS
+                        station_hazards = extract_station_hazard_stats(
+                            str(sample_tifs[-1]),
+                            stations=MONITORING_LOCATIONS,
+                            nominal_issue_time=nominal_time,
+                        )
+                        logger.info("Successfully extracted hazard stats from sample raster %s", sample_tifs[-1].name)
+                    except Exception as fallback_err:
+                        logger.warning("Fallback sample extraction failed: %s", fallback_err)
+
         payload_bytes = json.dumps(selected_files, sort_keys=True).encode("utf-8")
         payload_hash = hashlib.sha256(payload_bytes).hexdigest()
 
@@ -137,9 +169,11 @@ class LhasaScraper:
                 "http_status_code": status_code,
                 "total_files_detected": len(extracted_files),
                 "extracted_sample_count": len(selected_files),
+                "has_station_hazards": len(station_hazards) > 0,
                 "payload_sha256": payload_hash,
             },
             "data": selected_files,
+            "station_hazards": station_hazards,
         }
 
     def _get_fallback_html(self) -> str:

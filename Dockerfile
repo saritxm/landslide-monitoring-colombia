@@ -8,4 +8,6 @@ RUN pip install --no-cache-dir \
     fastparquet \
     beautifulsoup4 \
     requests \
-    pyyaml
+    pyyaml \
+    numpy \
+    rasterio

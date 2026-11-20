@@ -9,6 +9,15 @@ venv/
 .pytest_cache/
 .ipynb_checkpoints/
 
+# LaTeX auxiliary files
+*.aux
+*.log
+*.out
+*.toc
+*.fdb_latexmk
+*.fls
+*.synctex.gz
+
 # Raw data (keep only small samples and placeholders)
 data/raw/*
 !data/raw/.gitkeep
@@ -27,5 +36,5 @@ Thumbs.db
 Grupo_7.txt
 Workshop_1.txt
 Workshop_2.txt
-workshop_2/
+Workshop_2/
 technical_report_workshop1/

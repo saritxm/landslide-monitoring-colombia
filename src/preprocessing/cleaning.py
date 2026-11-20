@@ -97,15 +97,21 @@ def transform_weather_to_silver(
     overall_median = df["soil_moisture_m3m3"].median()
     df["soil_moisture_m3m3"] = df["soil_moisture_m3m3"].fillna(station_medians).fillna(overall_median).fillna(0.0)
 
-    # 3. Outlier detection
-    is_iqr, iqr_stats = detect_outliers_iqr(df["precipitation_mm"], multiplier=1.5)
-    is_z, z_scores, z_stats = detect_outliers_zscore(df["precipitation_mm"], threshold=3.0)
-    df["precip_outlier_iqr"] = is_iqr
-    df["precip_outlier_zscore"] = is_z
-    df["precip_zscore"] = z_scores.round(3)
+    # 3. Deduplication by natural key (before computing statistics/outliers)
+    df = df.drop_duplicates(subset=["station_name", "timestamp"], keep="last").copy()
 
-    # 4. Deduplication by natural key
-    df = df.drop_duplicates(subset=["station_name", "timestamp"], keep="last")
+    # 4. Outlier detection per station on wet hours (precipitation_mm > 0)
+    df["precip_outlier_iqr"] = False
+    df["precip_outlier_zscore"] = False
+    df["precip_zscore"] = 0.0
+
+    for _, group in df.groupby("station_name", observed=True):
+        idx = group.index
+        is_iqr, _ = detect_outliers_iqr(group["precipitation_mm"], multiplier=1.5, exclude_zeros=True)
+        is_z, z_scores, _ = detect_outliers_zscore(group["precipitation_mm"], threshold=3.0, exclude_zeros=True)
+        df.loc[idx, "precip_outlier_iqr"] = is_iqr
+        df.loc[idx, "precip_outlier_zscore"] = is_z
+        df.loc[idx, "precip_zscore"] = z_scores.round(3)
 
     # 5. Lineage & Traceability
     df["_bronze_source_file"] = source_filename
@@ -122,9 +128,92 @@ def transform_weather_to_silver(
     stats = {
         "rows_initial": rows_initial,
         "rows_clean": len(df),
-        "iqr_outliers": int(is_iqr.sum()),
-        "zscore_outliers": int(is_z.sum()),
+        "iqr_outliers": int(df["precip_outlier_iqr"].sum()),
+        "zscore_outliers": int(df["precip_outlier_zscore"].sum()),
         "imputed_soil_moisture": int(df["soil_moisture_imputed"].sum()),
+    }
+    return df, stats
+
+
+def transform_era5_to_silver(
+    raw_payload: Dict[str, Any],
+    source_filename: str,
+) -> Tuple[pd.DataFrame, Dict[str, Any]]:
+    """Transforms raw Open-Meteo ERA5 daily JSON into Silver historical rainfall schema."""
+    processed_time = datetime.now(timezone.utc)
+    raw_data = raw_payload.get("data", [])
+
+    rows = []
+    for loc in raw_data:
+        loc_name = loc.get("location_name", "Unknown")
+        department = loc.get("department", "Unknown")
+        lat = loc.get("returned_latitude")
+        lon = loc.get("returned_longitude")
+        elevation = loc.get("elevation_m")
+
+        daily = loc.get("daily", {})
+        dates = daily.get("time", [])
+        precips = daily.get("precipitation_sum", [])
+
+        for i, date_str in enumerate(dates):
+            p_val = precips[i] if i < len(precips) else None
+            rows.append({
+                "station_name": loc_name,
+                "department": department,
+                "latitude": lat,
+                "longitude": lon,
+                "elevation_m": elevation,
+                "date_raw": date_str,
+                "precip_24h_mm": p_val,
+            })
+
+    if not rows:
+        return pd.DataFrame(), {"rows_initial": 0, "rows_clean": 0}
+
+    df = pd.DataFrame(rows)
+    rows_initial = len(df)
+
+    # 1. Schema enforcement and UTC date parsing
+    df["date_utc"] = pd.to_datetime(df["date_raw"], utc=True, errors="coerce")
+    df = df.drop(columns=["date_raw"])
+    df["latitude"] = pd.to_numeric(df["latitude"], errors="coerce").astype("float64")
+    df["longitude"] = pd.to_numeric(df["longitude"], errors="coerce").astype("float64")
+    df["elevation_m"] = pd.to_numeric(df["elevation_m"], errors="coerce").astype("float64")
+    df["precip_24h_mm"] = pd.to_numeric(df["precip_24h_mm"], errors="coerce").fillna(0.0).clip(lower=0.0)
+    df["station_name"] = df["station_name"].astype("category")
+    df["department"] = df["department"].astype("category")
+
+    # 2. Critical null handling and deduplication before rolling windows
+    df = df.dropna(subset=["date_utc", "latitude", "longitude"])
+    df = df.drop_duplicates(subset=["station_name", "date_utc"], keep="last")
+    df = df.sort_values(["station_name", "date_utc"]).reset_index(drop=True)
+
+    # 3. 7-day rolling precipitation sum and seasonal attributes for PySpark percentiles
+    df["precip_7d_mm"] = (
+        df.groupby("station_name", observed=True)["precip_24h_mm"]
+        .transform(lambda s: s.rolling(window=7, min_periods=1).sum())
+        .round(3)
+    )
+    df["year"] = df["date_utc"].dt.year.astype("int16")
+    df["month"] = df["date_utc"].dt.month.astype("int8")
+
+    # 4. Lineage and traceability
+    df["_bronze_source_file"] = source_filename
+    df["_processed_at_utc"] = processed_time
+    df["_record_hash"] = df.apply(
+        lambda r: compute_row_hash({
+            "st": str(r["station_name"]),
+            "dt": str(r["date_utc"].date()),
+            "p24": float(r["precip_24h_mm"]),
+        }),
+        axis=1,
+    )
+
+    stats = {
+        "rows_initial": rows_initial,
+        "rows_clean": len(df),
+        "max_precip_24h": float(df["precip_24h_mm"].max()) if not df.empty else 0.0,
+        "max_precip_7d": float(df["precip_7d_mm"].max()) if not df.empty else 0.0,
     }
     return df, stats
 
@@ -133,8 +222,45 @@ def transform_lhasa_to_silver(
     raw_payload: Dict[str, Any],
     source_filename: str,
 ) -> Tuple[pd.DataFrame, Dict[str, Any]]:
-    """Transforms raw scraped LHASA directory JSON into the Silver hazard metadata schema."""
+    """Transforms raw scraped LHASA JSON into Silver hazard schema (station-level or metadata)."""
     processed_time = datetime.now(timezone.utc)
+
+    # Priority: If station-level raster hazard stats were extracted, produce tabular hazard table
+    if "station_hazards" in raw_payload and raw_payload["station_hazards"]:
+        hazards = raw_payload["station_hazards"]
+        df = pd.DataFrame(hazards)
+        rows_initial = len(df)
+        df["nominal_issue_time"] = pd.to_datetime(df["nominal_issue_time"], utc=True)
+        df["latitude"] = pd.to_numeric(df["latitude"], errors="coerce").astype("float64")
+        df["longitude"] = pd.to_numeric(df["longitude"], errors="coerce").astype("float64")
+        df["station_name"] = df["station_name"].astype("category")
+        df["department"] = df["department"].astype("category")
+        df["valid_pixel_count"] = pd.to_numeric(df.get("valid_pixel_count", 0), errors="coerce").fillna(0).astype("int64")
+        df["lhasa_max"] = pd.to_numeric(df.get("lhasa_max"), errors="coerce")
+        df["lhasa_mean"] = pd.to_numeric(df.get("lhasa_mean"), errors="coerce")
+        df["lhasa_p90"] = pd.to_numeric(df.get("lhasa_p90"), errors="coerce")
+        df["has_high_hazard"] = df.get("has_high_hazard", False).astype(bool)
+
+        df = df.dropna(subset=["station_name", "nominal_issue_time"])
+        df = df.drop_duplicates(subset=["station_name", "nominal_issue_time"], keep="last")
+
+        df["_bronze_source_file"] = source_filename
+        df["_processed_at_utc"] = processed_time
+        df["_record_hash"] = df.apply(
+            lambda r: compute_row_hash({
+                "st": str(r["station_name"]),
+                "time": str(r["nominal_issue_time"]),
+                "max": str(r["lhasa_max"]),
+            }),
+            axis=1,
+        )
+        stats = {
+            "rows_initial": rows_initial,
+            "rows_clean": len(df),
+            "high_hazard_stations": int(df["has_high_hazard"].sum()),
+        }
+        return df, stats
+
     raw_data = raw_payload.get("data", [])
 
     if not raw_data:
@@ -193,15 +319,22 @@ def transform_glc_to_silver(
     # 1. Type normalization & timestamp parsing
     # event_date format: "%m/%d/%Y %I:%M:%S %p" or similar
     df["event_date_parsed"] = pd.to_datetime(df["event_date"], format="mixed", errors="coerce")
+    df["is_time_unknown"] = (
+        (df["event_date_parsed"].dt.hour == 0)
+        & (df["event_date_parsed"].dt.minute == 0)
+        & (df["event_date_parsed"].dt.second == 0)
+    ).fillna(False)
     # Add 5 hours to convert Colombia local time to UTC
-    df["timestamp_utc"] = df["event_date_parsed"].apply(
-        lambda d: (d + pd.Timedelta(hours=5)).tz_localize("UTC") if pd.notnull(d) else pd.NaT
-    )
+    df["timestamp_utc"] = (df["event_date_parsed"] + pd.Timedelta(hours=5)).dt.tz_localize("UTC")
 
     df["latitude"] = pd.to_numeric(df["latitude"], errors="coerce")
     df["longitude"] = pd.to_numeric(df["longitude"], errors="coerce")
-    df["fatality_count"] = pd.to_numeric(df.get("fatality_count", 0), errors="coerce").fillna(0).astype("int64")
-    df["injury_count"] = pd.to_numeric(df.get("injury_count", 0), errors="coerce").fillna(0).astype("int64")
+    if "fatality_count" not in df.columns:
+        df["fatality_count"] = 0
+    if "injury_count" not in df.columns:
+        df["injury_count"] = 0
+    df["fatality_count"] = pd.to_numeric(df["fatality_count"], errors="coerce").fillna(0).astype("int64")
+    df["injury_count"] = pd.to_numeric(df["injury_count"], errors="coerce").fillna(0).astype("int64")
 
     # 2. Null handling & Geographic filter
     # Drop rows without coordinates or timestamps
@@ -225,11 +358,21 @@ def transform_glc_to_silver(
     # Impute missing country_name (as learned from Mocoa tragedy event_id 10790)
     df["country_name"] = df["country_name"].fillna("Colombia")
     df.loc[df["country_name"] == "", "country_name"] = "Colombia"
-    df["admin_division_name"] = df["admin_division_name"].fillna("Unknown")
-    df["landslide_trigger"] = df["landslide_trigger"].fillna("unknown")
-    df["landslide_size"] = df["landslide_size"].fillna("unknown")
+    for col, default_val in [
+        ("admin_division_name", "Unknown"),
+        ("landslide_trigger", "unknown"),
+        ("landslide_size", "unknown"),
+    ]:
+        if col not in df.columns:
+            df[col] = default_val
+        else:
+            df[col] = df[col].fillna(default_val)
 
-    # 3. Text Preprocessing for NLP on narrative columns
+    # 3. Deduplication by event_id (before computing narrative features and outliers)
+    if "event_id" in df.columns:
+        df = df.drop_duplicates(subset=["event_id"], keep="first").copy()
+
+    # 4. Text Preprocessing for NLP on narrative columns
     text_fields = ["event_title", "event_description", "location_description"]
     for col in text_fields:
         if col not in df.columns:
@@ -245,16 +388,12 @@ def transform_glc_to_silver(
     df["tokens_nlp"] = df["raw_text_narrative"].apply(tokenize_and_remove_stopwords)
     df["token_count"] = df["tokens_nlp"].apply(len)
 
-    # 4. Outlier detection on fatality_count
-    is_iqr, _ = detect_outliers_iqr(df["fatality_count"], multiplier=1.5)
-    is_z, z_scores, _ = detect_outliers_zscore(df["fatality_count"], threshold=3.0)
+    # 5. Outlier detection on fatality_count (ignoring 0-fatality events to prevent zero collapse)
+    is_iqr, _ = detect_outliers_iqr(df["fatality_count"], multiplier=1.5, exclude_zeros=True)
+    is_z, z_scores, _ = detect_outliers_zscore(df["fatality_count"], threshold=3.0, exclude_zeros=True)
     df["fatality_outlier_iqr"] = is_iqr
     df["fatality_outlier_zscore"] = is_z
     df["fatality_zscore"] = z_scores.round(2)
-
-    # 5. Deduplication by event_id
-    if "event_id" in df.columns:
-        df = df.drop_duplicates(subset=["event_id"], keep="first")
 
     # 6. Lineage & Traceability
     df["_bronze_source_file"] = source_filename

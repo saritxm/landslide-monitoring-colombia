@@ -13,6 +13,9 @@ x-airflow-common: &airflow-common
     AIRFLOW__SCHEDULER__MIN_FILE_PROCESS_INTERVAL: 10
     AIRFLOW_CONN_FS_DEFAULT: 'fs:///opt/airflow/datalake_bronze'
     PYTHONPATH: /opt/airflow:/opt/airflow/src
+    GDAL_DISABLE_READDIR_ON_OPEN: "EMPTY_DIR"
+    CPL_VSIL_CURL_ALLOWED_EXTENSIONS: ".tif"
+    GDAL_HTTP_TIMEOUT: "30"
   volumes:
     - ./datalake_bronze:/opt/airflow/datalake_bronze
     - ./datalake_silver:/opt/airflow/datalake_silver
