@@ -45,19 +45,16 @@ class LhasaScraper:
         query_time = datetime.now(timezone.utc)
         logger.info("Scraping LHASA directory at %s...", self.directory_url)
 
-        try:
-            response = requests.get(
-                self.directory_url,
-                headers=self.headers,
-                timeout=self.timeout,
-            )
-            response.raise_for_status()
-            html_text = response.text
-            status_code = response.status_code
-        except Exception as err:
-            logger.warning("Live request failed (%s). Using fallback parsing strategy.", err)
-            html_text = self._get_fallback_html()
-            status_code = 200
+        # No offline fallback: if the portal cannot be reached the task fails and Airflow
+        # retries it. Persisting a made-up listing would put invented data into Bronze.
+        response = requests.get(
+            self.directory_url,
+            headers=self.headers,
+            timeout=self.timeout,
+        )
+        response.raise_for_status()
+        html_text = response.text
+        status_code = response.status_code
 
         soup = BeautifulSoup(html_text, "html.parser")
         extracted_files = []
@@ -141,21 +138,10 @@ class LhasaScraper:
                     nominal_issue_time=nominal_time,
                 )
             except Exception as err:
-                logger.info("Live /vsicurl/ extraction unavailable (%s). Checking local sample fallback...", err)
-                from pathlib import Path
-                sample_tifs = sorted(Path("workshop_1/samples").glob("lhasa_colombia_*.tif"))
-                if sample_tifs:
-                    try:
-                        from src.sources.lhasa_raster import extract_station_hazard_stats
-                        from src.sources.api_client import MONITORING_LOCATIONS
-                        station_hazards = extract_station_hazard_stats(
-                            str(sample_tifs[-1]),
-                            stations=MONITORING_LOCATIONS,
-                            nominal_issue_time=nominal_time,
-                        )
-                        logger.info("Successfully extracted hazard stats from sample raster %s", sample_tifs[-1].name)
-                    except Exception as fallback_err:
-                        logger.warning("Fallback sample extraction failed: %s", fallback_err)
+                # No fallback to an older sample raster: its values would be labelled with
+                # today's issue time. The listing is still persisted without station hazards.
+                logger.warning("Live /vsicurl/ hazard extraction unavailable (%s); "
+                               "persisting the listing without station hazards.", err)
 
         payload_bytes = json.dumps(selected_files, sort_keys=True).encode("utf-8")
         payload_hash = hashlib.sha256(payload_bytes).hexdigest()
@@ -175,23 +161,6 @@ class LhasaScraper:
             "data": selected_files,
             "station_hazards": station_hazards,
         }
-
-    def _get_fallback_html(self) -> str:
-        """Fallback realistic HTML structure if external connection is unreachable."""
-        return """
-        <!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2 Final//EN">
-        <html><head><title>Index of /datashare/landslides/nrt/hazard/tif</title></head>
-        <body>
-        <h1>Index of /datashare/landslides/nrt/hazard/tif</h1>
-        <table>
-        <tr><th><a href="?C=N;O=D">Name</a></th><th><a href="?C=M;O=A">Last modified</a></th><th><a href="?C=S;O=A">Size</a></th></tr>
-        <tr><td><a href="20261116T0000.tif">20261116T0000.tif</a></td><td align="right">2026-11-16 05:12  </td><td align="right">142M</td></tr>
-        <tr><td><a href="20261115T0000.tif">20261115T0000.tif</a></td><td align="right">2026-11-15 05:08  </td><td align="right">142M</td></tr>
-        <tr><td><a href="20261114T0000.tif">20261114T0000.tif</a></td><td align="right">2026-11-14 05:10  </td><td align="right">141M</td></tr>
-        <tr><td><a href="20261113T0000.tif">20261113T0000.tif</a></td><td align="right">2026-11-13 05:09  </td><td align="right">142M</td></tr>
-        <tr><td><a href="20261112T0000.tif">20261112T0000.tif</a></td><td align="right">2026-11-12 05:07  </td><td align="right">142M</td></tr>
-        </table></body></html>
-        """
 
 
 def extract_lhasa_data() -> Dict[str, Any]:

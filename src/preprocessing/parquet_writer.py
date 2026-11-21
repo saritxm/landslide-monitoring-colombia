@@ -2,6 +2,7 @@
 
 from datetime import datetime, timezone
 import json
+import os
 import logging
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -42,6 +43,9 @@ def write_dataframe_to_silver_parquet(
     ts_str = ts.strftime("%Y%m%d_%H%M%S")
     filename = f"{topic}_{ts_str}.parquet"
     target_path = dest_dir / filename
+    if target_path.exists():
+        # Never silently overwrite an existing Silver file
+        raise FileExistsError(f"Silver file already exists: {target_path}")
 
     # Convert DataFrame to PyArrow Table
     table = pa.Table.from_pandas(df, preserve_index=False)
@@ -58,11 +62,14 @@ def write_dataframe_to_silver_parquet(
     table = table.replace_schema_metadata(new_meta)
 
     # Write Parquet with Snappy compression
+    # Atomic write: a half-written file is never visible under the final name
+    tmp_path = target_path.with_suffix(".parquet.tmp")
     pq.write_table(
         table,
-        target_path,
+        tmp_path,
         compression="snappy",
         version="2.6",
     )
+    os.replace(tmp_path, target_path)
     logger.info("Persisted Silver Parquet file: %s (%d rows)", target_path, len(df))
     return target_path

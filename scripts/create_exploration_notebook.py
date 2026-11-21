@@ -37,6 +37,7 @@ cells.append(nbf.v4.new_code_cell("""import pathlib
 import pandas as pd
 import pyarrow.parquet as pq
 import matplotlib.pyplot as plt
+import numpy as np
 import json
 
 SILVER_DIR = pathlib.Path('../datalake_silver')
@@ -55,7 +56,8 @@ We select the latest rainfall Parquet file and inspect its schema, column types,
 """))
 
 # Cell 4: Load rainfall
-cells.append(nbf.v4.new_code_cell("""rainfall_files = [f for f in parquet_files if 'rainfall' in f.name]
+cells.append(nbf.v4.new_code_cell("""# 'rainfall_2...' excludes the 'rainfall_historical_...' (ERA5) files
+rainfall_files = [f for f in parquet_files if f.name.startswith('rainfall_2')]
 assert len(rainfall_files) > 0, 'No rainfall parquet file found'
 target_rainfall = rainfall_files[-1]
 
@@ -74,8 +76,10 @@ df_rain.head()
 """))
 
 # Cell 5: Markdown
-cells.append(nbf.v4.new_markdown_cell("""## 3. Preprocessing Audit: Null Handling & Imputation
-We verify that no nulls remain in critical coordinates or timestamps, and check the soil moisture imputation flag.
+cells.append(nbf.v4.new_markdown_cell("""## 3. Preprocessing Audit: Null Handling
+Coordinates, timestamps and precipitation must never be null (rows with a missing or physically
+impossible precipitation are rejected, never set to 0). Short soil-moisture gaps (<= 2 h) are
+interpolated and flagged; longer gaps stay null.
 """))
 
 # Cell 6: Null check
@@ -138,6 +142,14 @@ print(f'Loaded {len(df_landslides)} landslide records.')
 print('Columns:', list(df_landslides.columns))
 
 # Display comparison of raw vs cleaned NLP text
+# Missing values are flagged, never imputed: no invented countries or zero deaths
+print('Events without country (kept, flagged):', int(df_landslides['country_missing'].sum()))
+print('Events without fatality count (kept as null):', int(df_landslides['fatality_missing'].sum()))
+print('Events with unknown time (00:00):', int(df_landslides['is_time_unknown'].sum()))
+display(df_landslides[df_landslides['event_id'].astype(str) == '10790'][
+    ['event_id', 'event_date', 'timestamp_utc', 'country_name', 'country_missing', 'fatality_count', 'fatality_outlier_iqr']])
+
+# Display comparison of raw vs cleaned NLP text
 sample_nlp = df_landslides[['country_name', 'admin_division_name', 'raw_text_narrative', 'cleaned_text_nlp', 'token_count']].head(5)
 sample_nlp
 """))
@@ -147,7 +159,7 @@ cells.append(nbf.v4.new_code_cell("""from collections import Counter
 
 all_tokens = []
 for token_list in df_landslides['tokens_nlp']:
-    if isinstance(token_list, (list, tuple)):
+    if isinstance(token_list, (list, tuple, np.ndarray)):  # Parquet returns numpy arrays
         all_tokens.extend(token_list)
 
 token_counts = Counter(all_tokens).most_common(20)
@@ -163,8 +175,9 @@ plt.show()
 """))
 
 # Cell 13: Markdown
-cells.append(nbf.v4.new_markdown_cell("""## 6. NASA LHASA Hazard Scraped Index (`lhasa_hazard_*.parquet`)
-We inspect the Silver dataset containing scraped raster files, issue timestamps, and file sizes.
+cells.append(nbf.v4.new_markdown_cell("""## 6. NASA LHASA Hazard per Station (`lhasa_hazard_*.parquet`)
+The scraper finds the newest nowcast GeoTIFF in the directory listing and reads only a +/-0.125 deg
+window around each monitoring station (HTTP range requests through GDAL /vsicurl/).
 """))
 
 # Cell 14: LHASA
@@ -172,16 +185,31 @@ cells.append(nbf.v4.new_code_cell("""lhasa_files = [f for f in parquet_files if 
 assert len(lhasa_files) > 0, 'No LHASA parquet file found'
 df_lhasa = pd.read_parquet(lhasa_files[-1])
 
-print(f'LHASA Scraped Catalog: {len(df_lhasa)} rasters tracked.')
-df_lhasa.head()
+print(f'LHASA Silver rows: {len(df_lhasa)}')
+df_lhasa.drop(columns=['_record_hash'], errors='ignore')
 """))
 
 # Cell 15: Markdown
-cells.append(nbf.v4.new_markdown_cell("""## 7. Data Lineage and Traceability Audit
+cells.append(nbf.v4.new_markdown_cell("""## 7. Historical daily rainfall (`rainfall_historical_*.parquet`, Open-Meteo ERA5 archive)
 Every record in the Silver layer must trace back to its origin in the Bronze layer.
 """))
 
 # Cell 16: Lineage
+cells.append(nbf.v4.new_code_cell("""hist_files = [f for f in parquet_files if f.name.startswith('rainfall_historical_')]
+df_hist = pd.concat([pd.read_parquet(f) for f in hist_files], ignore_index=True)
+print(f'{len(df_hist):,} station-days from {df_hist.date_utc.min():%Y-%m-%d} to {df_hist.date_utc.max():%Y-%m-%d} '
+      f'in {df_hist._bronze_source_file.nunique()} yearly Bronze files')
+print('Missing daily totals (kept null):', int(df_hist['precip_24h_missing'].sum()))
+summary = df_hist.groupby('station_name', observed=True).agg(
+    mean_daily_mm=('precip_24h_mm', 'mean'), p95_daily_mm=('precip_24h_mm', lambda s: s.quantile(0.95)),
+    max_daily_mm=('precip_24h_mm', 'max'), max_7d_mm=('precip_7d_mm', 'max')).round(1)
+summary.sort_values('mean_daily_mm', ascending=False)
+"""))
+
+cells.append(nbf.v4.new_markdown_cell("""## 8. Data Lineage and Traceability Audit
+Every record in the Silver layer must trace back to its origin in the Bronze layer.
+"""))
+
 cells.append(nbf.v4.new_code_cell("""lineage_summary = pd.DataFrame([
     {
         'Dataset': 'Rainfall (Open-Meteo)',
@@ -209,10 +237,11 @@ lineage_summary
 """))
 
 # Cell 17: Conclusion
-cells.append(nbf.v4.new_markdown_cell("""## 8. Conclusion
+cells.append(nbf.v4.new_markdown_cell("""## 9. Conclusion
 The Silver layer implementation satisfies all Workshop #2 requirements:
 - **Type safety:** Strict schemas enforced with PyArrow and Pandas.
-- **Data Quality:** Outlier flags, null imputation, and deduplication applied deterministically.
+- **Data Quality:** Outlier flags (never deletions), conservative null handling (missing values are flagged,
+  not invented) and deduplication applied deterministically.
 - **NLP Readiness:** Cleaned narratives and token lists ready for semantic hazard classification.
 - **Traceability:** Full lineage tracking from Bronze JSON to Silver Parquet.
 """))

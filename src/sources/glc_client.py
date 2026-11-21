@@ -38,6 +38,9 @@ def extract_glc_data(csv_path: Optional[Path] = None, colombia_only: bool = True
                 & (df["longitude"] <= -66.8)
             )
             df = df[mask]
+        # Missing values become JSON null (pandas NaN would be written as the
+        # non-standard token NaN, which other JSON readers reject)
+        df = df.astype(object).where(df.notna(), None)
         data_records = df.to_dict(orient="records")
 
     query_time = datetime.now(timezone.utc)

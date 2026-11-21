@@ -5,7 +5,7 @@ Extracts data from both the Open-Meteo REST API and the NASA LHASA portal
 files in datalake_bronze/ using datetime nomenclature.
 """
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import json
 import logging
 from pathlib import Path
@@ -27,6 +27,10 @@ if not BRONZE_DIR.exists():
     schedule="@hourly",
     start_date=datetime(2026, 11, 1, tzinfo=timezone.utc),
     catchup=False,
+    max_active_runs=1,
+    # Sources have no offline fallback: a failed or hung request is retried by Airflow
+    default_args={"retries": 2, "retry_delay": timedelta(minutes=2),
+                  "execution_timeout": timedelta(minutes=10)},
     tags=["bronze", "ingestion", "landslide_monitoring"],
     doc_md=__doc__,
 )
@@ -110,6 +114,20 @@ def bronze_ingestion_pipeline():
             if payload is None:
                 logger.info("Skipping %s (up-to-date per ingestion cadence).", source_id)
                 continue
+
+            # Skip a payload identical to the last persisted one of the same source
+            # (e.g. the Open-Meteo model has not been updated since the previous hour,
+            # or the static GLC snapshot is re-read): it would only duplicate Bronze/Silver.
+            new_hash = payload.get("metadata", {}).get("payload_sha256")
+            previous = sorted(target_dir.glob(f"{source_id}_*.json"))
+            if new_hash and previous:
+                try:
+                    last_hash = json.loads(previous[-1].read_text(encoding="utf-8"))["metadata"].get("payload_sha256")
+                except Exception:
+                    last_hash = None
+                if last_hash == new_hash:
+                    logger.info("Skipping %s: content unchanged since %s.", source_id, previous[-1].name)
+                    continue
 
             is_valid, errors = validate_bronze_payload(payload, source_id)
             if not is_valid:

@@ -11,7 +11,9 @@ x-airflow-common: &airflow-common
     AIRFLOW__CORE__ENABLE_XCOM_PICKLING: 'true'
     AIRFLOW__API__AUTH_BACKENDS: 'airflow.api.auth.backend.basic_auth,airflow.api.auth.backend.session'
     AIRFLOW__SCHEDULER__MIN_FILE_PROCESS_INTERVAL: 10
-    AIRFLOW_CONN_FS_DEFAULT: 'fs:///opt/airflow/datalake_bronze'
+    # The FileSensor base path must be passed as the 'path' extra; a URI path
+    # (fs:///opt/...) is ignored by FSHook and the sensor would look in the wrong folder.
+    AIRFLOW_CONN_FS_DEFAULT: 'fs://?path=%2Fopt%2Fairflow%2Fdatalake_bronze'
     PYTHONPATH: /opt/airflow:/opt/airflow/src
     GDAL_DISABLE_READDIR_ON_OPEN: "EMPTY_DIR"
     CPL_VSIL_CURL_ALLOWED_EXTENSIONS: ".tif"

@@ -1,7 +1,8 @@
 """Silver Layer Transformation and Cleaning Pipelines.
 
 Converts raw Bronze JSON payloads into cleansed, standardized Silver DataFrames
-with explicit schema enforcement, null imputation, NLP normalization, outlier flags,
+with explicit schema enforcement, conservative null handling (no invented values),
+NLP normalization, outlier flags,
 and end-to-end lineage tracking.
 """
 
@@ -17,6 +18,12 @@ from src.preprocessing.nlp import clean_text_for_nlp, tokenize_and_remove_stopwo
 from src.preprocessing.outliers import detect_outliers_iqr, detect_outliers_zscore
 
 logger = logging.getLogger(__name__)
+
+# Physical validity bound for hourly precipitation (mm/h). Values above it are
+# far beyond any recorded hourly rainfall and are treated as errors, not extremes.
+MAX_HOURLY_PRECIP_MM = 300.0
+# Longest soil-moisture gap (hours) that may be interpolated.
+SOIL_MOISTURE_MAX_GAP_H = 2
 
 
 def compute_row_hash(row_dict: Dict[str, Any]) -> str:
@@ -83,19 +90,29 @@ def transform_weather_to_silver(
     df["station_name"] = df["station_name"].astype("category")
     df["department"] = df["department"].astype("category")
 
-    # 2. Null handling & imputation
-    # Drop rows without timestamp or coordinates
+    # 2. Null handling
+    # Drop rows without timestamp or coordinates (cannot be placed in time/space)
     df = df.dropna(subset=["timestamp", "latitude", "longitude"])
 
-    # Precipitation: non-negative check and zero-fill missing values
-    df["precipitation_mm"] = df["precipitation_mm"].fillna(0.0).clip(lower=0.0)
-    df["rain_mm"] = df["rain_mm"].fillna(0.0).clip(lower=0.0)
+    # Precipitation is the variable the risk indicator is built on: a missing or
+    # physically impossible value is NOT replaced by 0 (that would invent "no rain").
+    # Such rows are rejected and counted; valid rows keep their raw value.
+    precip_missing = df["precipitation_mm"].isna()
+    precip_invalid = (df["precipitation_mm"] < 0) | (df["precipitation_mm"] > MAX_HOURLY_PRECIP_MM)
+    rows_rejected_missing = int(precip_missing.sum())
+    rows_rejected_invalid = int(precip_invalid.sum())
+    df = df[~precip_missing & ~precip_invalid].copy()
+    # rain_mm is informative only: keep nulls as nulls
+    df.loc[df["rain_mm"] < 0, "rain_mm"] = np.nan
 
-    # Soil moisture: track whether imputed, then fill missing with median of the station
+    # Soil moisture changes slowly: interpolate short gaps (<= 2 h) within each station
+    # and flag them; longer gaps stay null instead of being filled with a median or 0.
+    df = df.sort_values(["station_name", "timestamp"])
     df["soil_moisture_imputed"] = df["soil_moisture_m3m3"].isna()
-    station_medians = df.groupby("station_name", observed=True)["soil_moisture_m3m3"].transform("median")
-    overall_median = df["soil_moisture_m3m3"].median()
-    df["soil_moisture_m3m3"] = df["soil_moisture_m3m3"].fillna(station_medians).fillna(overall_median).fillna(0.0)
+    df["soil_moisture_m3m3"] = df.groupby("station_name", observed=True)["soil_moisture_m3m3"].transform(
+        lambda s: s.interpolate(limit=SOIL_MOISTURE_MAX_GAP_H, limit_area="inside")
+    )
+    df["soil_moisture_imputed"] = df["soil_moisture_imputed"] & df["soil_moisture_m3m3"].notna()
 
     # 3. Deduplication by natural key (before computing statistics/outliers)
     df = df.drop_duplicates(subset=["station_name", "timestamp"], keep="last").copy()
@@ -131,6 +148,8 @@ def transform_weather_to_silver(
         "iqr_outliers": int(df["precip_outlier_iqr"].sum()),
         "zscore_outliers": int(df["precip_outlier_zscore"].sum()),
         "imputed_soil_moisture": int(df["soil_moisture_imputed"].sum()),
+        "rows_rejected_missing_precip": rows_rejected_missing,
+        "rows_rejected_invalid_precip": rows_rejected_invalid,
     }
     return df, stats
 
@@ -179,7 +198,10 @@ def transform_era5_to_silver(
     df["latitude"] = pd.to_numeric(df["latitude"], errors="coerce").astype("float64")
     df["longitude"] = pd.to_numeric(df["longitude"], errors="coerce").astype("float64")
     df["elevation_m"] = pd.to_numeric(df["elevation_m"], errors="coerce").astype("float64")
-    df["precip_24h_mm"] = pd.to_numeric(df["precip_24h_mm"], errors="coerce").fillna(0.0).clip(lower=0.0)
+    df["precip_24h_mm"] = pd.to_numeric(df["precip_24h_mm"], errors="coerce")
+    # Missing or negative daily totals stay null (never 0) and are flagged
+    df.loc[df["precip_24h_mm"] < 0, "precip_24h_mm"] = np.nan
+    df["precip_24h_missing"] = df["precip_24h_mm"].isna()
     df["station_name"] = df["station_name"].astype("category")
     df["department"] = df["department"].astype("category")
 
@@ -191,7 +213,7 @@ def transform_era5_to_silver(
     # 3. 7-day rolling precipitation sum and seasonal attributes for PySpark percentiles
     df["precip_7d_mm"] = (
         df.groupby("station_name", observed=True)["precip_24h_mm"]
-        .transform(lambda s: s.rolling(window=7, min_periods=1).sum())
+        .transform(lambda s: s.rolling(window=7, min_periods=7).sum())
         .round(3)
     )
     df["year"] = df["date_utc"].dt.year.astype("int16")
@@ -204,7 +226,7 @@ def transform_era5_to_silver(
         lambda r: compute_row_hash({
             "st": str(r["station_name"]),
             "dt": str(r["date_utc"].date()),
-            "p24": float(r["precip_24h_mm"]),
+            "p24": None if pd.isna(r["precip_24h_mm"]) else float(r["precip_24h_mm"]),
         }),
         axis=1,
     )
@@ -212,8 +234,9 @@ def transform_era5_to_silver(
     stats = {
         "rows_initial": rows_initial,
         "rows_clean": len(df),
-        "max_precip_24h": float(df["precip_24h_mm"].max()) if not df.empty else 0.0,
-        "max_precip_7d": float(df["precip_7d_mm"].max()) if not df.empty else 0.0,
+        "missing_precip_24h": int(df["precip_24h_missing"].sum()),
+        "max_precip_24h": float(df["precip_24h_mm"].max()) if not df.empty else None,
+        "max_precip_7d": float(df["precip_7d_mm"].max()) if not df.empty else None,
     }
     return df, stats
 
@@ -273,7 +296,8 @@ def transform_lhasa_to_silver(
     df["nominal_issue_time"] = pd.to_datetime(df["nominal_issue_time"], utc=True)
     df["file_name"] = df["file_name"].astype(str)
     df["url"] = df["url"].astype(str)
-    df["content_length_bytes"] = pd.to_numeric(df.get("content_length_bytes", pd.Series(dtype="float64")), errors="coerce").fillna(0).astype("int64")
+    # Only the newest files get an HTTP HEAD request: the others have an unknown size (null, not 0)
+    df["content_length_bytes"] = pd.to_numeric(df.get("content_length_bytes", pd.Series(dtype="float64")), errors="coerce").astype("Int64")
     df["etag"] = df.get("etag", pd.Series(dtype="str")).fillna("unknown").astype(str)
     df["last_modified"] = df.get("last_modified", pd.Series(dtype="str")).fillna("unknown").astype(str)
 
@@ -329,12 +353,13 @@ def transform_glc_to_silver(
 
     df["latitude"] = pd.to_numeric(df["latitude"], errors="coerce")
     df["longitude"] = pd.to_numeric(df["longitude"], errors="coerce")
-    if "fatality_count" not in df.columns:
-        df["fatality_count"] = 0
-    if "injury_count" not in df.columns:
-        df["injury_count"] = 0
-    df["fatality_count"] = pd.to_numeric(df["fatality_count"], errors="coerce").fillna(0).astype("int64")
-    df["injury_count"] = pd.to_numeric(df["injury_count"], errors="coerce").fillna(0).astype("int64")
+    # Casualty counts: a missing value is unknown, not zero. Keep it null (nullable Int64)
+    # and flag it, so no deaths or injuries are invented.
+    for col in ("fatality_count", "injury_count"):
+        if col not in df.columns:
+            df[col] = pd.NA
+        df[col] = pd.to_numeric(df[col], errors="coerce").astype("Int64")
+    df["fatality_missing"] = df["fatality_count"].isna()
 
     # 2. Null handling & Geographic filter
     # Drop rows without coordinates or timestamps
@@ -355,9 +380,12 @@ def transform_glc_to_silver(
     )
     df = df[mask_bbox & mask_country].copy()
 
-    # Impute missing country_name (as learned from Mocoa tragedy event_id 10790)
-    df["country_name"] = df["country_name"].fillna("Colombia")
-    df.loc[df["country_name"] == "", "country_name"] = "Colombia"
+    # Missing country_name is NOT imputed: the bounding box also covers parts of Ecuador,
+    # Venezuela, Panama, Peru and Brazil, so a null-country event inside it is not
+    # necessarily Colombian (Mocoa 2017, event_id 10790, is one of them). The rows are
+    # kept and flagged; the country is assigned spatially in the Gold layer.
+    df.loc[df["country_name"] == "", "country_name"] = pd.NA
+    df["country_missing"] = df["country_name"].isna()
     for col, default_val in [
         ("admin_division_name", "Unknown"),
         ("landslide_trigger", "unknown"),
@@ -389,8 +417,9 @@ def transform_glc_to_silver(
     df["token_count"] = df["tokens_nlp"].apply(len)
 
     # 5. Outlier detection on fatality_count (ignoring 0-fatality events to prevent zero collapse)
-    is_iqr, _ = detect_outliers_iqr(df["fatality_count"], multiplier=1.5, exclude_zeros=True)
-    is_z, z_scores, _ = detect_outliers_zscore(df["fatality_count"], threshold=3.0, exclude_zeros=True)
+    fatalities = df["fatality_count"].astype("float64")  # nulls stay NaN and are never flagged
+    is_iqr, _ = detect_outliers_iqr(fatalities, multiplier=1.5, exclude_zeros=True)
+    is_z, z_scores, _ = detect_outliers_zscore(fatalities, threshold=3.0, exclude_zeros=True)
     df["fatality_outlier_iqr"] = is_iqr
     df["fatality_outlier_zscore"] = is_z
     df["fatality_zscore"] = z_scores.round(2)
@@ -413,5 +442,7 @@ def transform_glc_to_silver(
         "rows_clean": len(df),
         "total_tokens_extracted": int(df["token_count"].sum()),
         "fatality_iqr_outliers": int(is_iqr.sum()),
+        "country_missing": int(df["country_missing"].sum()),
+        "fatality_missing": int(df["fatality_missing"].sum()),
     }
     return df, stats

@@ -24,7 +24,7 @@ plt.rcParams.update({
 })
 
 # 1. Figure: Precipitation Distribution and Station Means
-rain_files = sorted(list(SILVER_DIR.glob("rainfall_*.parquet")))
+rain_files = sorted(list(SILVER_DIR.glob("rainfall_2*.parquet")))  # excludes rainfall_historical_*
 if rain_files:
     df_rain = pd.read_parquet(rain_files[-1])
     fig, axes = plt.subplots(1, 2, figsize=(10, 4), dpi=300)
@@ -104,21 +104,21 @@ box_props_dash = dict(boxstyle="round,pad=0.5", facecolor="#fbeee6", edgecolor="
 ax.text(0.08, 0.78, "External Sources\n\n• Open-Meteo Forecast\n• Open-Meteo ERA5 (Archive)\n• NASA LHASA Portal\n• NASA GLC Catalog",
         ha="center", va="center", bbox=box_props_src, fontsize=8)
 
-ax.text(0.30, 0.78, "Airflow Ingestion DAGs\n\n• bronze_ingestion_dag (@hourly)\n• bronze_historical_backfill_dag\n• Validates schemas & bbox\n• Emits _READY.flag",
+ax.text(0.30, 0.78, "Airflow Ingestion DAGs\n\n• bronze_ingestion_dag (@hourly)\n• bronze_historical_backfill_dag\n• Validates schemas & bbox\n• Skips unchanged payloads\n• Emits _READY.flag",
         ha="center", va="center", bbox=box_props_dag1, fontsize=8)
 
-ax.text(0.53, 0.78, "datalake_bronze/ (Raw)\n\n• openmeteo_forecast_*.json\n• openmeteo_era5_*.json\n• nasa_lhasa_*.json (+ rasters/)\n• nasa_glc_*.json\n• _READY.flag (witness)",
+ax.text(0.53, 0.78, "datalake_bronze/ (Raw)\n\n• openmeteo_forecast_*.json\n• openmeteo_era5_*.json\n• nasa_lhasa_*.json (+ station hazards)\n• nasa_glc_*.json\n• _READY.flag (witness)",
         ha="center", va="center", bbox=box_props_bronze, fontsize=8)
 
 # Intermediate Sensor
-ax.text(0.53, 0.40, "Airflow FileSensor (Event-Driven)\nDetects _READY.flag\nmode='reschedule', poke=30s\nUnlinks flag upon completion",
+ax.text(0.53, 0.40, "Airflow FileSensor (Event-Driven)\nDetects _READY.flag\nmode='reschedule', poke=30s\nConsumes the flag, then processes\nfiles missing from the manifest",
         ha="center", va="center", bbox=box_props_sensor, fontsize=7.5)
 
 # Lower Row: Silver, Gold, Dashboard
-ax.text(0.30, 0.18, "Silver Processing DAG\n(Pandas / PyArrow / rasterio)\n\n• Type casting & UTC dates\n• Soil moisture & country imputation\n• NLP normalization on narratives\n• Per-station wet IQR outliers\n• LHASA spatial raster extraction",
+ax.text(0.30, 0.18, "Silver Processing DAG\n(Pandas / PyArrow)\n\n• Type casting & UTC dates\n• Short-gap soil moisture interpolation\n• Missing values flagged (no 0 / no country)\n• NLP normalization on narratives\n• Per-station wet-hour IQR/Z outliers\n• One Parquet per topic and run",
         ha="center", va="center", bbox=box_props_dag2, fontsize=7.5)
 
-ax.text(0.53, 0.18, "datalake_silver/ (Parquet)\n\n• rainfall_*.parquet (Hourly)\n• rainfall_historical_*.parquet\n• lhasa_hazard_*.parquet\n• landslides_*.parquet\n• Cryptographic lineage hash",
+ax.text(0.53, 0.18, "datalake_silver/ (Parquet)\n\n• rainfall_*.parquet (Hourly)\n• rainfall_historical_*.parquet\n• lhasa_hazard_*.parquet\n• landslides_*.parquet\n• Lineage: Bronze file + row hash",
         ha="center", va="center", bbox=box_props_silver, fontsize=7.5)
 
 ax.text(0.76, 0.18, "Gold Layer (Planned - W#3)\n(Apache PySpark)\n\n• 0.25° grid spatial joins\n• 24h & 7d antecedent rain\n• Historical ERA5 percentiles\n• Landslide Risk Indicator (LRI)",

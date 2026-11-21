@@ -5,7 +5,7 @@ partitioned by calendar year into datalake_bronze/, then emits _READY.flag
 so silver_processing_dag processes the files automatically.
 """
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import json
 import logging
 from pathlib import Path
@@ -32,6 +32,10 @@ if not BRONZE_DIR.exists():
         "end_year": Param(2025, type="integer", minimum=1980, maximum=2026),
         "force_overwrite": Param(False, type="boolean"),
     },
+    # A request that hangs on the network is killed after 10 minutes and retried;
+    # years already persisted are skipped on the retry.
+    default_args={"retries": 2, "retry_delay": timedelta(minutes=1),
+                  "execution_timeout": timedelta(minutes=10)},
     tags=["bronze", "historical", "era5", "backfill"],
     doc_md=__doc__,
 )
@@ -41,6 +45,7 @@ def bronze_historical_backfill_pipeline():
     @task()
     def ingest_era5_by_year(**context) -> List[str]:
         from src.sources.era5_client import extract_era5_historical
+        from src.validation.schema import validate_bronze_payload
 
         params = context["params"]
         start_year = int(params["start_year"])
@@ -63,6 +68,9 @@ def bronze_historical_backfill_pipeline():
             start_date = f"{year}-01-01"
             end_date = f"{year}-12-31"
             payload = extract_era5_historical(start_date=start_date, end_date=end_date)
+            is_valid, errors = validate_bronze_payload(payload, "openmeteo_era5")
+            if not is_valid:
+                raise ValueError(f"ERA5 {year} payload failed validation: {errors}")
 
             filename = f"openmeteo_era5_{year}_{ts_str}.json"
             filepath = BRONZE_DIR / filename

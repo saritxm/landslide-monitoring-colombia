@@ -1,0 +1,316 @@
+[
+  {
+    "dag_id": "bronze_ingestion_dag",
+    "run_id": "scheduled__2026-11-21T05:00:00+00:00",
+    "run_type": "scheduled",
+    "state": "success",
+    "start_date": "2026-11-21 06:39:35.693788",
+    "end_date": "2026-11-21 06:40:20.554971",
+    "tasks": [
+      {
+        "task_id": "extract_weather_api",
+        "state": "success",
+        "try_number": 1,
+        "duration_s": 27.056217
+      },
+      {
+        "task_id": "extract_lhasa_scraper",
+        "state": "success",
+        "try_number": 1,
+        "duration_s": 8.417308
+      },
+      {
+        "task_id": "extract_landslide_catalog",
+        "state": "success",
+        "try_number": 1,
+        "duration_s": 0.569899
+      },
+      {
+        "task_id": "validate_and_persist",
+        "state": "success",
+        "try_number": 1,
+        "duration_s": 0.119061
+      }
+    ]
+  },
+  {
+    "dag_id": "silver_processing_dag",
+    "run_id": "scheduled__2026-11-21T05:00:00+00:00",
+    "run_type": "scheduled",
+    "state": "success",
+    "start_date": "2026-11-21 06:40:16.970384",
+    "end_date": "2026-11-21 06:46:02.796243",
+    "tasks": [
+      {
+        "task_id": "sensor_detect_bronze_file",
+        "state": "success",
+        "try_number": 1,
+        "duration_s": 0.096992
+      },
+      {
+        "task_id": "process_bronze_to_silver",
+        "state": "success",
+        "try_number": 1,
+        "duration_s": 1.150799
+      }
+    ]
+  },
+  {
+    "dag_id": "bronze_historical_backfill_dag",
+    "run_id": "manual__2026-11-21T06:40:46+00:00",
+    "run_type": "manual",
+    "state": "failed",
+    "start_date": "2026-11-21 06:40:47.187931",
+    "end_date": "2026-11-21 06:45:57.487721",
+    "tasks": [
+      {
+        "task_id": "ingest_era5_by_year",
+        "state": "failed",
+        "try_number": 1,
+        "duration_s": 308.210255
+      },
+      {
+        "task_id": "emit_ready_flag",
+        "state": "upstream_failed",
+        "try_number": 0,
+        "duration_s": 0.0
+      }
+    ]
+  },
+  {
+    "dag_id": "bronze_historical_backfill_dag",
+    "run_id": "manual__2026-11-21T06:46:41+00:00",
+    "run_type": "manual",
+    "state": "success",
+    "start_date": "2026-11-21 06:46:42.287006",
+    "end_date": "2026-11-21 06:57:54.934409",
+    "tasks": [
+      {
+        "task_id": "ingest_era5_by_year",
+        "state": "success",
+        "try_number": 2,
+        "duration_s": 6.903014
+      },
+      {
+        "task_id": "emit_ready_flag",
+        "state": "success",
+        "try_number": 1,
+        "duration_s": 0.099656
+      }
+    ]
+  },
+  {
+    "dag_id": "bronze_ingestion_dag",
+    "run_id": "scheduled__2026-11-21T06:00:00+00:00",
+    "run_type": "scheduled",
+    "state": "success",
+    "start_date": "2026-11-21 07:00:01.069808",
+    "end_date": "2026-11-21 07:00:13.262317",
+    "tasks": [
+      {
+        "task_id": "extract_weather_api",
+        "state": "success",
+        "try_number": 1,
+        "duration_s": 0.582747
+      },
+      {
+        "task_id": "extract_lhasa_scraper",
+        "state": "success",
+        "try_number": 1,
+        "duration_s": 0.097616
+      },
+      {
+        "task_id": "extract_landslide_catalog",
+        "state": "success",
+        "try_number": 1,
+        "duration_s": 0.084487
+      },
+      {
+        "task_id": "validate_and_persist",
+        "state": "success",
+        "try_number": 1,
+        "duration_s": 0.112549
+      }
+    ]
+  },
+  {
+    "dag_id": "silver_processing_dag",
+    "run_id": "scheduled__2026-11-21T06:00:00+00:00",
+    "run_type": "scheduled",
+    "state": "success",
+    "start_date": "2026-11-21 07:00:01.070376",
+    "end_date": "2026-11-21 07:00:13.268001",
+    "tasks": [
+      {
+        "task_id": "sensor_detect_bronze_file",
+        "state": "success",
+        "try_number": 1,
+        "duration_s": 0.103187
+      },
+      {
+        "task_id": "process_bronze_to_silver",
+        "state": "success",
+        "try_number": 1,
+        "duration_s": 1.414069
+      }
+    ]
+  },
+  {
+    "dag_id": "bronze_ingestion_dag",
+    "run_id": "manual__2026-11-21T07:00:37+00:00",
+    "run_type": "manual",
+    "state": "success",
+    "start_date": "2026-11-21 07:00:38.343618",
+    "end_date": "2026-11-21 07:00:45.737510",
+    "tasks": [
+      {
+        "task_id": "extract_weather_api",
+        "state": "success",
+        "try_number": 1,
+        "duration_s": 0.502428
+      },
+      {
+        "task_id": "extract_lhasa_scraper",
+        "state": "success",
+        "try_number": 1,
+        "duration_s": 0.106862
+      },
+      {
+        "task_id": "extract_landslide_catalog",
+        "state": "success",
+        "try_number": 1,
+        "duration_s": 0.104111
+      },
+      {
+        "task_id": "validate_and_persist",
+        "state": "success",
+        "try_number": 1,
+        "duration_s": 0.121123
+      }
+    ]
+  },
+  {
+    "dag_id": "bronze_ingestion_dag",
+    "run_id": "manual__2026-11-21T07:04:49+00:00",
+    "run_type": "manual",
+    "state": "success",
+    "start_date": "2026-11-21 07:04:50.783606",
+    "end_date": "2026-11-21 07:05:35.920337",
+    "tasks": [
+      {
+        "task_id": "extract_weather_api",
+        "state": "success",
+        "try_number": 1,
+        "duration_s": 37.304594
+      },
+      {
+        "task_id": "extract_lhasa_scraper",
+        "state": "success",
+        "try_number": 1,
+        "duration_s": 0.111477
+      },
+      {
+        "task_id": "extract_landslide_catalog",
+        "state": "success",
+        "try_number": 1,
+        "duration_s": 0.097596
+      },
+      {
+        "task_id": "validate_and_persist",
+        "state": "success",
+        "try_number": 1,
+        "duration_s": 0.099644
+      }
+    ]
+  },
+  {
+    "dag_id": "bronze_ingestion_dag",
+    "run_id": "manual__2026-11-21T07:11:29+00:00",
+    "run_type": "manual",
+    "state": "success",
+    "start_date": "2026-11-21 07:11:30.960281",
+    "end_date": "2026-11-21 07:11:39.311391",
+    "tasks": [
+      {
+        "task_id": "extract_weather_api",
+        "state": "success",
+        "try_number": 1,
+        "duration_s": 1.368458
+      },
+      {
+        "task_id": "extract_lhasa_scraper",
+        "state": "success",
+        "try_number": 1,
+        "duration_s": 0.092523
+      },
+      {
+        "task_id": "extract_landslide_catalog",
+        "state": "success",
+        "try_number": 1,
+        "duration_s": 0.104013
+      },
+      {
+        "task_id": "validate_and_persist",
+        "state": "success",
+        "try_number": 1,
+        "duration_s": 0.128807
+      }
+    ]
+  },
+  {
+    "dag_id": "bronze_ingestion_dag",
+    "run_id": "manual__2026-11-21T07:17:06+00:00",
+    "run_type": "manual",
+    "state": "success",
+    "start_date": "2026-11-21 07:17:07.918694",
+    "end_date": "2026-11-21 07:17:15.824621",
+    "tasks": [
+      {
+        "task_id": "extract_weather_api",
+        "state": "success",
+        "try_number": 1,
+        "duration_s": 0.501066
+      },
+      {
+        "task_id": "extract_lhasa_scraper",
+        "state": "success",
+        "try_number": 1,
+        "duration_s": 0.09902
+      },
+      {
+        "task_id": "extract_landslide_catalog",
+        "state": "success",
+        "try_number": 1,
+        "duration_s": 0.101717
+      },
+      {
+        "task_id": "validate_and_persist",
+        "state": "success",
+        "try_number": 1,
+        "duration_s": 0.111485
+      }
+    ]
+  },
+  {
+    "dag_id": "silver_processing_dag",
+    "run_id": "manual__2026-11-21T07:17:37+00:00",
+    "run_type": "manual",
+    "state": "success",
+    "start_date": "2026-11-21 07:17:38.649207",
+    "end_date": "2026-11-21 07:17:42.525418",
+    "tasks": [
+      {
+        "task_id": "sensor_detect_bronze_file",
+        "state": "success",
+        "try_number": 1,
+        "duration_s": 0.094085
+      },
+      {
+        "task_id": "process_bronze_to_silver",
+        "state": "success",
+        "try_number": 1,
+        "duration_s": 0.537038
+      }
+    ]
+  }
+]

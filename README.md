@@ -36,11 +36,11 @@ The project implements a modern Medallion Architecture orchestrated via Apache A
                    datalake_bronze/source_YYYYMMDD_HHMMSS.json
                                   │
                                   ▼
-                   [ FileSensor: poke datalake_bronze ]
+            [ FileSensor: waits for datalake_bronze/_READY.flag ]
                                   │
                                   ▼
                      [ silver_processing_dag ]
-         (Schema Enforcement · Null Imputation · NLP Normalization · IQR/Z-score Outliers)
+         (Schema Enforcement · Null Flagging (no invented values) · NLP Normalization · IQR/Z-score Outliers)
                                   │
                                   ▼
                    datalake_silver/topic_YYYYMMDD_HHMMSS.parquet
@@ -60,7 +60,8 @@ The project implements a modern Medallion Architecture orchestrated via Apache A
 ```
 ├── airflow/
 │   └── dags/
-│       ├── bronze_ingestion_dag.py        # TaskFlow API ingestion DAG
+│       ├── bronze_ingestion_dag.py        # TaskFlow API ingestion DAG (hourly)
+│       ├── bronze_historical_backfill_dag.py  # Manual ERA5 daily-rainfall backfill by year
 │       └── silver_processing_dag.py        # FileSensor-triggered Silver transformation DAG
 ├── config/
 │   └── sources.yaml                       # Formal declarative source contract
@@ -71,7 +72,7 @@ The project implements a modern Medallion Architecture orchestrated via Apache A
 │   ├── 01_source_profiling.ipynb          # Workshop #1 data profiling & Prophet experiment
 │   └── 02_silver_layer_exploration.ipynb  # Workshop #2 Parquet exploration & data audits
 ├── scripts/
-│   ├── generate_pipeline_samples.py       # Offline/testing pipeline execution script
+│   ├── generate_report_figures.py         # Figures for the Workshop #2 report (from Silver data)
 │   └── create_exploration_notebook.py     # Notebook generator
 ├── src/
 │   ├── sources/                           # API client (Open-Meteo), Scraper (BS4), GLC loader
@@ -82,7 +83,9 @@ The project implements a modern Medallion Architecture orchestrated via Apache A
 │   └── test_workshop2.py                  # Workshop #2 automated tests (ingestion, NLP, Parquet)
 ├── workshop_1/                            # Workshop #1 deliverables (samples, mapping)
 ├── workshop_2/                            # Workshop #2 deliverables (report PDF, HTML)
-│   └── technical_architecture_report.pdf
+│   ├── Workshop2_Report_Team7.pdf         # Workshop #2 technical report (revised)
+│   ├── img/                               # Airflow UI screenshots used in the report
+│   └── report/                            # Report source (HTML) and builder script
 ├── docker-compose.yml                     # Airflow containerized stack definition
 ├── Dockerfile                             # Custom Airflow image with Python dependencies
 └── requirements.txt                       # Project Python requirements
@@ -114,7 +117,10 @@ Services started:
 ### 2. Run the Airflow DAGs
 Open `http://localhost:8080`:
 1. Unpause `bronze_ingestion_dag` and trigger a run. It queries Open-Meteo, scrapes NASA LHASA, validates payloads, and writes JSON files to `datalake_bronze/`.
-2. `silver_processing_dag` detects new files in `datalake_bronze/` via its `FileSensor`, applies the preprocessing pipeline, and outputs Parquet files to `datalake_silver/`.
+2. `silver_processing_dag` waits (FileSensor) for the `_READY.flag` written by the Bronze DAGs, processes every Bronze file not yet in `datalake_silver/.processed_manifest.json`, and writes one Parquet file per topic to `datalake_silver/`.
+3. Optional: trigger `bronze_historical_backfill_dag` (parameters `start_year`, `end_year`) to download ERA5 daily rainfall by year; the Silver DAG then writes `rainfall_historical_*.parquet`.
+
+Data-quality policy: missing values are flagged and kept null, never replaced by invented values (no 0 mm of rain, no 0 deaths, no assumed country). Rows with a missing or physically impossible precipitation value are rejected and counted. If a source cannot be reached, the task fails and Airflow retries it; there is no offline fallback that would write made-up data.
 
 ### 3. Local Environment & Automated Testing
 ```bash

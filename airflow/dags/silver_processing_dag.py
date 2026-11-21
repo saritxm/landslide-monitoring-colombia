@@ -58,6 +58,7 @@ def silver_processing_pipeline():
             transform_weather_to_silver,
         )
         from src.preprocessing.parquet_writer import write_dataframe_to_silver_parquet
+        import pandas as pd
 
         SILVER_DIR.mkdir(parents=True, exist_ok=True)
         manifest_path = SILVER_DIR / ".processed_manifest.json"
@@ -70,10 +71,19 @@ def silver_processing_pipeline():
             except Exception:
                 processed_files = set()
 
+        # Consume the trigger flag BEFORE listing the files: a Bronze run that finishes
+        # while this task is running writes a new flag, which triggers the next Silver run
+        # instead of being deleted at the end of this one.
+        (BRONZE_DIR / "_READY.flag").unlink(missing_ok=True)
+
         json_files = sorted(BRONZE_DIR.glob("*.json"))
         logger.info("Found %d JSON files in %s", len(json_files), BRONZE_DIR)
 
         processed_outputs = []
+        # One Parquet file per topic and run. (Writing one file per Bronze file, named to
+        # the second, let two files of the same topic processed within the same second
+        # overwrite each other.) Every row keeps its Bronze file in _bronze_source_file.
+        batches: Dict[str, Dict[str, Any]] = {}
 
         for json_path in json_files:
             file_name = json_path.name
@@ -105,35 +115,43 @@ def silver_processing_pipeline():
                 logger.warning("Unknown source for %s, skipping.", file_name)
                 continue
 
+            processed_files.add(file_name)
             if df.empty:
                 logger.warning("Transformation resulted in empty DataFrame for %s", file_name)
                 continue
 
-            # Persist to Silver Parquet
+            batch = batches.setdefault(topic, {"frames": [], "files": [], "sources": set(), "stats": {}})
+            batch["frames"].append(df)
+            batch["files"].append(file_name)
+            batch["sources"].add(source_id)
+            batch["stats"][file_name] = stats
+
+        for topic, batch in batches.items():
+            df = pd.concat(batch["frames"], ignore_index=True)
+            for col in ("station_name", "department"):
+                if col in df.columns:
+                    df[col] = df[col].astype("category")
             parquet_path = write_dataframe_to_silver_parquet(
                 df=df,
                 topic=topic,
                 output_dir=SILVER_DIR,
                 custom_metadata={
-                    "bronze_source_file": file_name,
-                    "source_id": source_id,
+                    "bronze_source_files": json.dumps(batch["files"]),
+                    "source_id": ",".join(sorted(batch["sources"])),
                     "rows_count": str(len(df)),
                 },
             )
-
-            processed_files.add(file_name)
             processed_outputs.append({
-                "bronze_file": file_name,
+                "bronze_files": batch["files"],
                 "parquet_file": str(parquet_path),
                 "topic": topic,
                 "row_count": len(df),
-                "stats": stats,
+                "stats": batch["stats"],
             })
 
         # Save updated manifest and clear trigger flag
         manifest_path.write_text(json.dumps(sorted(list(processed_files)), indent=2), encoding="utf-8")
-        (BRONZE_DIR / "_READY.flag").unlink(missing_ok=True)
-        logger.info("Cleared _READY.flag. Finished processing. Generated %d Silver files.", len(processed_outputs))
+        logger.info("Finished processing. Generated %d Silver files.", len(processed_outputs))
         return processed_outputs
 
     # Sensor triggers processing

@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import pandas as pd
 import pytest
+import requests
 
 from src.preprocessing.cleaning import (
     transform_era5_to_silver,
@@ -22,11 +23,32 @@ from src.sources.scraper import extract_lhasa_data
 from src.validation.schema import validate_bronze_payload
 
 ROOT = Path(__file__).resolve().parents[1]
+FORECAST_SAMPLE = ROOT / "workshop_1" / "samples" / "openmeteo_forecast_20261107_044746.json"
+
+
+def live(fn, *args, **kwargs):
+    """Calls a live source; skips the test (instead of failing) when there is no network."""
+    try:
+        return fn(*args, **kwargs)
+    except requests.RequestException as err:
+        pytest.skip(f"source unreachable: {err}")
+
+
+def forecast_bronze_payload():
+    """Bronze envelope built from the real Open-Meteo response recorded in Workshop #1."""
+    raw = json.loads(FORECAST_SAMPLE.read_text(encoding="utf-8"))
+    # The W1 sample used its own 10 points, so they are labelled generically
+    data = [{
+        "location_name": f"point_{i}", "department": "unknown",
+        "returned_latitude": loc["latitude"], "returned_longitude": loc["longitude"],
+        "elevation_m": loc.get("elevation"), "hourly": loc["hourly"], "hourly_units": loc["hourly_units"],
+    } for i, loc in enumerate(raw)]
+    return {"metadata": {"source_id": "openmeteo_forecast"}, "data": data}
 
 
 def test_openmeteo_api_client_structure():
     """Verify that Open-Meteo client returns valid schema with Colombia locations."""
-    payload = extract_openmeteo_data()
+    payload = live(extract_openmeteo_data)
     assert "metadata" in payload
     assert "data" in payload
     assert payload["metadata"]["source_id"] == "openmeteo_forecast"
@@ -41,7 +63,7 @@ def test_openmeteo_api_client_structure():
 
 def test_lhasa_scraper_structure():
     """Verify that NASA LHASA scraper detects raster files and returns metadata."""
-    payload = extract_lhasa_data()
+    payload = live(extract_lhasa_data)
     assert "metadata" in payload
     assert "data" in payload
     assert payload["metadata"]["source_id"] == "nasa_lhasa"
@@ -100,7 +122,7 @@ def test_outlier_detection_iqr_and_zscore():
 
 def test_weather_transformation_and_lineage(tmp_path):
     """Verify weather transformation produces clean DataFrame and Parquet with lineage."""
-    raw_payload = extract_openmeteo_data()
+    raw_payload = forecast_bronze_payload()
     df, stats = transform_weather_to_silver(raw_payload, "openmeteo_test.json")
 
     assert not df.empty
@@ -128,7 +150,14 @@ def test_glc_landslide_transformation_and_nlp(tmp_path):
     assert "cleaned_text_nlp" in df.columns
     assert "tokens_nlp" in df.columns
     assert "fatality_outlier_iqr" in df.columns
-    assert (df["country_name"] == "Colombia").all()
+    # Foreign events are excluded; missing countries are flagged, never imputed
+    assert set(df["country_name"].dropna()) == {"Colombia"}
+    mocoa = df[df["event_id"].astype(str) == "10790"].iloc[0]
+    assert bool(mocoa["country_missing"]) and pd.isna(mocoa["country_name"])
+    assert int(mocoa["fatality_count"]) == 329
+    assert str(mocoa["timestamp_utc"]) == "2017-03-25 22:32:00+00:00"   # 17:32 local + 5 h
+    # Missing fatality counts stay null (no invented zero deaths)
+    assert df["fatality_count"].isna().sum() == df["fatality_missing"].sum() > 0
 
     pq_path = write_dataframe_to_silver_parquet(df, "landslides_test", output_dir=tmp_path)
     assert pq_path.exists()
@@ -186,7 +215,8 @@ def test_era5_extraction_and_silver_transformation(tmp_path):
     """Verify ERA5 archive extraction, schema validation, and Silver Parquet transformation."""
     # Test a short 5-day window for 2 stations to stay lightweight
     test_stations = MONITORING_LOCATIONS[:2]
-    payload = extract_era5_historical(
+    payload = live(
+        extract_era5_historical,
         start_date="2023-05-01",
         end_date="2023-05-05",
         stations=test_stations,
@@ -207,6 +237,9 @@ def test_era5_extraction_and_silver_transformation(tmp_path):
     assert "month" in df.columns
     assert "_record_hash" in df.columns
     assert df["precip_24h_mm"].min() >= 0.0
+    # A 7-day sum is only computed with 7 complete days: with a 5-day window every
+    # 7-day value is null instead of an understated partial sum
+    assert df["precip_7d_mm"].isna().all()
 
     pq_path = write_dataframe_to_silver_parquet(df, "rainfall_historical", output_dir=tmp_path)
     assert pq_path.exists()
@@ -250,3 +283,29 @@ def test_lhasa_raster_hazard_extraction_and_silver(tmp_path):
     read_df = pd.read_parquet(pq_path)
     assert len(read_df) == len(df)
 
+
+
+def test_missing_or_impossible_rain_is_rejected_not_zero_filled():
+    """A missing or physically impossible precipitation value must not become 0 mm."""
+    payload = forecast_bronze_payload()
+    hourly = payload["data"][0]["hourly"]
+    hourly["precipitation"][0] = None      # missing
+    hourly["precipitation"][1] = -1.0      # impossible
+    hourly["precipitation"][2] = 999.0     # impossible (> 300 mm/h)
+    df, stats = transform_weather_to_silver(payload, "rain_test.json")
+    assert stats["rows_rejected_missing_precip"] == 1
+    assert stats["rows_rejected_invalid_precip"] == 2
+    assert len(df) == stats["rows_initial"] - 3
+    assert df["precipitation_mm"].notna().all()
+
+
+def test_soil_moisture_short_gaps_interpolated_long_gaps_kept_null():
+    payload = forecast_bronze_payload()
+    sm = payload["data"][0]["hourly"]["soil_moisture_0_to_1cm"]
+    sm[10] = None                          # 1-hour gap -> interpolated
+    for i in range(20, 25):                # 5-hour gap -> stays null
+        sm[i] = None
+    df, _ = transform_weather_to_silver(payload, "sm_test.json")
+    st = df[df["station_name"] == "point_0"].reset_index(drop=True)
+    assert bool(st.loc[10, "soil_moisture_imputed"]) and pd.notna(st.loc[10, "soil_moisture_m3m3"])
+    assert st.loc[20:24, "soil_moisture_m3m3"].isna().sum() >= 3

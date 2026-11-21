@@ -36,5 +36,6 @@ Thumbs.db
 Grupo_7.txt
 Workshop_1.txt
 Workshop_2.txt
-Workshop_2/
-technical_report_workshop1/
+# (Workshop_2/ removed: on Windows git ignores case, so it also hid the
+#  required workshop_2/ deliverables folder)
+technical_report_workshop1/*.tmp

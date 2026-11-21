@@ -31,6 +31,10 @@ def _build_retry_session(retries: int = 3, backoff_factor: float = 2.0) -> reque
         backoff_factor=backoff_factor,
         status_forcelist=(429, 500, 502, 503, 504),
         allowed_methods=("GET",),
+        # A 429 can carry a very long Retry-After (until the quota window resets);
+        # honouring it blocked the task for many minutes. Use our own short backoff
+        # and let the Airflow task retry/timeout handle longer outages.
+        respect_retry_after_header=False,
     )
     adapter = HTTPAdapter(max_retries=retry)
     session.mount("https://", adapter)

@@ -1,0 +1,595 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8">
+<title>Workshop 2 Report - Team 7 Landslide Monitoring</title><style>@page { size: A4; margin: 20mm 19mm 20mm 19mm; }
+body { font-family: "DejaVu Serif", Georgia, serif; font-size: 10.2pt; line-height: 1.42; color: #1d1d1d; }
+h1 { font-family: "DejaVu Sans", Helvetica, sans-serif; font-size: 19pt; color: #1f3a5f; margin: 0 0 4pt; }
+h2 { font-family: "DejaVu Sans", Helvetica, sans-serif; font-size: 13.5pt; color: #1f3a5f; border-bottom: 1.2px solid #1f3a5f; padding-bottom: 2pt; margin: 18pt 0 6pt; page-break-after: avoid; }
+h3 { font-family: "DejaVu Sans", Helvetica, sans-serif; font-size: 11pt; color: #2c4e78; margin: 11pt 0 4pt; page-break-after: avoid; }
+p { margin: 0 0 6pt; text-align: justify; }
+table { border-collapse: collapse; width: 100%; margin: 4pt 0 9pt; font-size: 8.6pt; }
+tr { page-break-inside: avoid; }
+th, td { border: 0.6px solid #9aa7b6; padding: 2.5pt 4pt; vertical-align: top; text-align: left; }
+th { background: #e6edf5; font-family: "DejaVu Sans", Helvetica, sans-serif; }
+code, pre { font-family: "DejaVu Sans Mono", monospace; font-size: 7.8pt; }
+pre { background: #f4f6f8; border: 0.6px solid #cfd6de; padding: 5pt 6pt; white-space: pre-wrap; word-break: break-all; margin: 3pt 0 8pt; page-break-inside: avoid; line-height: 1.3; }
+figure { margin: 6pt 0 10pt; text-align: center; page-break-inside: avoid; }
+figure img { max-width: 100%; border: 0.5px solid #ccc; }
+figcaption { font-size: 8.5pt; color: #444; margin-top: 3pt; }
+.cover { border-bottom: 2px solid #1f3a5f; padding-bottom: 8pt; margin-bottom: 10pt; }
+.meta { font-family: "DejaVu Sans", Helvetica, sans-serif; font-size: 9.2pt; color: #333; }
+.note { background: #f7f3e8; border-left: 3px solid #c08a2b; padding: 4pt 7pt; margin: 4pt 0 8pt; font-size: 9.3pt; page-break-inside: avoid; }
+ul, ol { margin: 0 0 6pt 16pt; padding: 0; } li { margin-bottom: 2pt; }
+.small { font-size: 8.5pt; }
+.pb { page-break-before: always; }
+table.small td code, table.small th code { font-size: 7.2pt; } td code { word-break: break-all; }
+</style></head><body>
+<div class="cover">
+<h1>Landslide Monitoring and Risk — Colombia<br>Technical Architecture and Bronze/Silver Pipeline</h1>
+<div class="meta">Workshop No. 2 Report (revised version) — Data Analysis Programming — Universidad Distrital Francisco José de Caldas<br>
+Professor: Eng. Carlos Andrés Sierra, M.Sc. — <b>Team 7</b>: Samuel Alberto Leal Saenz (20231020072), Cristian Andres Gámez Nuñez (20231020100), Sara Nicolle Martínez Moreno (20231020116)<br>
+Repository: <code>https://github.com/saritxm/landslide-monitoring-colombia</code> — Report date: 21 November 2026</div>
+</div>
+
+<div class="note"><b>About this revision.</b> This document replaces the report delivered on 16 November. A review of the
+first version found that several figures in its results section did not come from the data in the repository, that the
+FileSensor did not wait for any file, and that the preprocessing replaced missing values with invented ones (0 deaths,
+0 mm of rain, country "Colombia"). Those problems are corrected in the code, all Bronze and Silver files were regenerated
+by real DAG runs, and <b>every number in this report is computed by <code>workshop_2/report/build_report.py</code> from the
+files in the repository</b>. Section 7 lists each correction.</div>
+
+<h2>1. Executive Summary</h2>
+<p>Workshop #1 validated the open sources for monitoring rainfall-triggered landslides in Colombia and defined their
+ingestion contracts. Workshop #2 turns that plan into a containerized pipeline organized as a medallion architecture:
+raw <b>Bronze</b> JSON, cleaned and typed <b>Silver</b> Parquet, and a planned <b>Gold</b> layer (Workshop #3).</p>
+<ul>
+<li><b>Stack:</b> Docker Compose with Apache Airflow (webserver, scheduler, triggerer, LocalExecutor) and PostgreSQL as
+the metadata database; DAGs, source code and the three data-lake folders are mounted as volumes.</li>
+<li><b>Bronze</b> — <code>bronze_ingestion_dag</code> (TaskFlow API, hourly) extracts the <b>Open-Meteo Forecast REST API</b>,
+<b>scrapes</b> the NASA LHASA nowcast directory with BeautifulSoup (and reads the newest hazard raster around each monitoring
+point), and loads the NASA Global Landslide Catalog; <code>bronze_historical_backfill_dag</code> downloads ERA5 daily rainfall
+2016–2025 from the Open-Meteo archive. Payloads are validated and persisted as <code>source_YYYYMMDD_HHMMSS.json</code>.</li>
+<li><b>Silver</b> — <code>silver_processing_dag</code> waits with a <b>FileSensor</b> for the <code>_READY.flag</code> written by
+the Bronze DAGs, applies type/time normalization, conservative null handling, NLP text cleaning, IQR/Z-score outlier
+flagging and deduplication, and writes one <code>topic_YYYYMMDD_HHMMSS.parquet</code> per topic and run, traceable to its
+Bronze files.</li>
+<li><b>Evidence:</b> 11 DAG runs (10 successful), 16 Bronze JSON files and
+5 Silver Parquet files (41,449 rows) produced from the live sources
+since 2026-11-21 06:39 UTC; 16 passed (3 Workshop #1 + 13 Workshop #2), run with pandas 2.1.4 / Airflow 2.10.5 and with pandas 3.1.</li>
+</ul>
+
+<h2>2. System Architecture</h2>
+<figure><img src='../figures/pipeline_architecture.png' style='width:100%'><figcaption>Figure 1. Architecture: external sources, Airflow DAGs, Bronze and Silver layers, and the planned Gold layer and dashboard.</figcaption></figure>
+<table class='small'><tr><th>Component</th><th>Responsibility</th><th>Technology</th><th>Inputs</th><th>Outputs</th></tr><tr><td>Open-Meteo Forecast API</td><td>Hourly precipitation, rain and 0–1 cm soil moisture for 10 monitoring points (2 past days + 3 forecast days)</td><td>REST/JSON, <code>requests</code> with retries</td><td>HTTP GET (10 points in one call)</td><td>JSON per point</td></tr><tr><td>Open-Meteo ERA5 archive</td><td>Daily precipitation 2016–2025 for the same points (baseline for percentiles in Gold)</td><td>REST/JSON</td><td>One request per year</td><td>JSON per point and year</td></tr><tr><td>NASA LHASA portal</td><td>Discover the newest published nowcast GeoTIFF and read hazard values near each point</td><td>BeautifulSoup (HTML listing), rasterio + GDAL <code>/vsicurl/</code> range reads</td><td>Directory listing HTML; GeoTIFF window</td><td>File list + station hazard stats</td></tr><tr><td>NASA Global Landslide Catalog</td><td>Historical landslide events (2007–2017) with text narratives</td><td>pandas</td><td>Catalog snapshot saved in Workshop #1</td><td>Rows inside the Colombia box</td></tr><tr><td><code>bronze_ingestion_dag</code></td><td>Extract, validate, skip unchanged payloads, persist, write <code>_READY.flag</code></td><td>Airflow TaskFlow API</td><td>Sources</td><td><code>datalake_bronze/*.json</code></td></tr><tr><td><code>bronze_historical_backfill_dag</code></td><td>Backfill ERA5 by year (manual, parameterized)</td><td>Airflow TaskFlow API + Params</td><td>Years</td><td><code>openmeteo_era5_YYYY_*.json</code></td></tr><tr><td>FileSensor</td><td>Start Silver processing when Bronze signals new files</td><td><code>FileSensor</code>, <code>mode='reschedule'</code></td><td><code>_READY.flag</code></td><td>Trigger of the processing task</td></tr><tr><td><code>silver_processing_dag</code></td><td>Clean, type, flag, deduplicate and persist</td><td>pandas, PyArrow</td><td>Unprocessed Bronze files (manifest)</td><td><code>datalake_silver/*.parquet</code></td></tr><tr><td>Gold layer (planned, W#3)</td><td>0.25° grid, antecedent rainfall, ERA5 percentiles, risk indicator</td><td>PySpark</td><td>Silver Parquet</td><td><code>datalake_gold/</code></td></tr></table>
+<h2>3. Docker Stack</h2>
+<table class='small'><tr><th>Service</th><th>Image</th><th>Role</th></tr><tr><td><code>postgres</code></td><td>postgres:15-alpine</td><td>Airflow metadata database (runs, task states, XComs, users); healthcheck with <code>pg_isready</code>; named volume</td></tr><tr><td><code>airflow-init</code></td><td>landslide-monitoring-airflow:2.9.2 (built from <code>Dockerfile</code>)</td><td>One-shot: migrates the database and creates the admin user, then exits</td></tr><tr><td><code>airflow-webserver</code></td><td>same image</td><td>UI at <code>http://localhost:8080</code> (admin / admin); healthcheck on <code>/health</code></td></tr><tr><td><code>airflow-scheduler</code></td><td>same image</td><td>Schedules runs and executes tasks with the LocalExecutor</td></tr><tr><td><code>airflow-triggerer</code></td><td>same image</td><td>Runs deferrable operators</td></tr></table>
+<p>The <code>Dockerfile</code> extends <code>apache/airflow:2.9.2</code> with pandas, PyArrow, BeautifulSoup, PyYAML, NumPy and
+rasterio, pinned with the official Airflow 2.9.2 constraints file so a build on another machine installs the same versions.
+Mounted volumes: <code>airflow/dags</code>, <code>src</code>, <code>config</code>, <code>workshop_1/samples</code>,
+<code>datalake_bronze</code>, <code>datalake_silver</code>, <code>datalake_gold</code>. The FileSensor connection is defined
+in the environment as <code>AIRFLOW_CONN_FS_DEFAULT='fs://?path=%2Fopt%2Fairflow%2Fdatalake_bronze'</code>: Airflow's
+<code>FSHook</code> reads the base folder only from the <code>path</code> extra (see Section 7).</p>
+<pre>docker compose up -d        # builds the image the first time, migrates the DB, starts the stack
+docker compose ps           # postgres, webserver, scheduler and triggerer running/healthy
+# UI: http://localhost:8080  (admin / admin) → unpause the DAGs → trigger bronze_ingestion_dag</pre>
+
+<h2>4. Preprocessing Pipeline (Bronze → Silver)</h2>
+<p>Each rule answers a problem observed in the Workshop #1 profiling. The guiding policy is that <b>Silver never invents a
+value</b>: a missing value is kept null and flagged, an impossible value is rejected and counted, and statistical extremes
+are flagged, never deleted, because extreme rainfall is exactly what the project monitors.</p>
+<h3>4.1 Null handling</h3>
+<table class='small'><tr><th>Field</th><th>Rule</th><th>Reason</th></tr><tr><td><code>precipitation_mm</code> (hourly)</td><td>Required. Missing, &lt; 0 or &gt; 300 mm/h → row rejected and counted (<code>rows_rejected_*</code> in the task stats)</td><td>It is the variable the risk indicator is built on; 0 would mean "it did not rain"</td></tr><tr><td><code>soil_moisture_m3m3</code></td><td>Gaps ≤ 2 h interpolated within the station and flagged <code>soil_moisture_imputed</code>; longer gaps stay null</td><td>Soil moisture changes slowly hour to hour; a long gap cannot be guessed</td></tr><tr><td><code>rain_mm</code></td><td>Kept as delivered (null stays null)</td><td>Informative only</td></tr><tr><td><code>precip_24h_mm</code> (ERA5)</td><td>Missing or negative → null + <code>precip_24h_missing</code>; <code>precip_7d_mm</code> only with 7 complete days</td><td>A partial window would understate antecedent rainfall</td></tr><tr><td><code>fatality_count</code>, <code>injury_count</code></td><td>Nullable integers; missing stays null + <code>fatality_missing</code></td><td>Filling with 0 invents "no deaths"</td></tr><tr><td><code>country_name</code></td><td>Not imputed; null/empty → null + <code>country_missing</code>. Events labelled with another country are excluded</td><td>The bounding box also covers Ecuador, Venezuela, Panama, Peru and Brazil; the country is assigned spatially in Gold</td></tr><tr><td><code>landslide_trigger</code>, <code>landslide_size</code>, <code>admin_division_name</code></td><td>Sentinel category <code>unknown</code> / <code>Unknown</code></td><td>Already the catalog's own convention</td></tr><tr><td>LHASA <code>content_length_bytes</code></td><td>Null when the file was not checked with HTTP HEAD (only the 3 newest are)</td><td>0 bytes would look like an empty upload</td></tr></table>
+<h3>4.2 Types, time and schema</h3>
+<p>All timestamps are converted to <code>timestamp[us, tz=UTC]</code>: Open-Meteo is requested in UTC; LHASA issue times
+come from the file name (<code>YYYYMMDDTHHMM</code>, UTC); GLC dates are Colombian local time and are shifted +5 h
+(Mocoa: 05:32 PM local → 22:32 UTC). GLC events at exactly 00:00 get <code>is_time_unknown</code>. Coordinates are
+float64, counts nullable Int64, station and department dictionary-encoded categories. Each Parquet file stores its
+schema, the list of Bronze files it was built from (<code>bronze_source_files</code>) and the row count in its metadata.</p>
+<h3>4.3 Text preprocessing (NLP)</h3>
+<p>GLC title, description and location are concatenated and cleaned: lowercasing, Unicode accent stripping (NFD),
+removal of URLs, HTML tags, punctuation and digits, whitespace normalization, tokenization, and removal of English +
+Spanish stop words and tokens shorter than 3 characters. Stemming is not applied because most tokens are place names.</p>
+<h3>4.4 Outliers</h3>
+<p>IQR (Q3 + 1.5·IQR) and Z-score (|z| &gt; 3) are computed <b>per station over wet hours only</b> (precipitation &gt; 0),
+because with mostly dry hours the plain IQR is 0 and every drizzle becomes an "outlier". Fatality outliers use known,
+non-zero counts. Results are boolean flags plus the z-score; no value is removed or clipped.</p>
+<h3>4.5 Deduplication and idempotency</h3>
+<ul>
+<li>Within a batch: natural keys (station, timestamp) for rainfall, (station, date) for ERA5, (station, issue time) for
+LHASA, <code>event_id</code> for GLC.</li>
+<li>Bronze: a payload whose SHA-256 equals the last persisted file of the same source is not written again; LHASA is
+read once per day and GLC once per month.</li>
+<li>Silver: a manifest (<code>.processed_manifest.json</code>) prevents a Bronze file from being processed twice; one
+Parquet file per topic and run; the writer is atomic and refuses to overwrite.</li>
+<li>Forecast polls overlap (each one repeats the past 2 days, which Open-Meteo revises), so the same station-hour can
+appear in several polls with different values; every row keeps <code>_bronze_source_file</code> and the Gold layer will
+use the most recent poll.</li>
+</ul>
+
+<h2>5. DAG Documentation</h2>
+<h3>5.1 <code>bronze_ingestion_dag</code></h3>
+<p>Schedule <code>@hourly</code>, <code>catchup=False</code>, <code>max_active_runs=1</code>, 2 retries (2 min) and a
+10-minute execution timeout per task. Tasks: <code>extract_weather_api</code> → Open-Meteo; <code>extract_lhasa_scraper</code>
+→ LHASA listing + station windows of the newest raster (daily cadence); <code>extract_landslide_catalog</code> → GLC
+(monthly cadence); <code>validate_and_persist</code> → envelope and bounds checks, unchanged-payload skip, JSON write and
+<code>_READY.flag</code>. There is no offline fallback: if a source cannot be reached the task fails and is retried, so no
+made-up data reaches Bronze.</p>
+<h3>5.2 <code>bronze_historical_backfill_dag</code></h3>
+<p>Manual (<code>schedule=None</code>) with parameters <code>start_year</code>, <code>end_year</code>,
+<code>force_overwrite</code>. One request per year (cost ≈ 26 Open-Meteo units for 10 points), validation, one file per year,
+years already present are skipped, then <code>_READY.flag</code>. Retries and a 10-minute timeout per attempt.</p>
+<h3>5.3 <code>silver_processing_dag</code></h3>
+<pre>FileSensor(task_id="sensor_detect_bronze_file", filepath="_READY.flag", fs_conn_id="fs_default",
+           poke_interval=30, timeout=300, mode="reschedule", soft_fail=True)
+    &gt;&gt; process_bronze_to_silver()</pre>
+<p>The processing task consumes the flag <b>before</b> listing the Bronze folder (a Bronze run finishing meanwhile writes a
+new flag that triggers the next Silver run), dispatches each unprocessed file to its transform, concatenates the results
+per topic, writes the Parquet files and updates the manifest. Without a flag the sensor gives up after 5 minutes and the
+run is marked skipped, not failed.</p>
+<h2 class="pb">6. Results Evidence</h2>
+<div class="note"><b>Execution environment.</b> The runs below were executed on the development machine with Apache Airflow
+2.10.5 installed with pip (SequentialExecutor, SQLite metadata DB), because Docker Hub could not be reached from it to pull
+the images. The DAG files, source modules and data folders are exactly the ones mounted by <code>docker-compose.yml</code>;
+the compose file was validated with <code>docker compose config</code>.</div>
+<h3>6.1 Airflow runs</h3>
+<table class='small'><tr><th>DAG</th><th>Run id</th><th>Type</th><th>State</th><th>Start (UTC)</th><th>Seconds</th><th>Tasks</th></tr><tr><td><code>bronze_ingestion_dag</code></td><td><code>scheduled__2026-11-21T05:00:00+00:00</code></td><td>scheduled</td><td>success</td><td>2026-11-21 06:39:35</td><td>45</td><td>4 success</td></tr><tr><td><code>silver_processing_dag</code></td><td><code>scheduled__2026-11-21T05:00:00+00:00</code></td><td>scheduled</td><td>success</td><td>2026-11-21 06:40:16</td><td>346</td><td>2 success</td></tr><tr><td><code>bronze_historical_backfill_dag</code></td><td><code>manual__2026-11-21T06:40:46+00:00</code></td><td>manual</td><td>failed</td><td>2026-11-21 06:40:47</td><td>310</td><td>1 failed, 1 upstream_failed</td></tr><tr><td><code>bronze_historical_backfill_dag</code></td><td><code>manual__2026-11-21T06:46:41+00:00</code></td><td>manual</td><td>success</td><td>2026-11-21 06:46:42</td><td>673</td><td>2 success (max try 2)</td></tr><tr><td><code>bronze_ingestion_dag</code></td><td><code>scheduled__2026-11-21T06:00:00+00:00</code></td><td>scheduled</td><td>success</td><td>2026-11-21 07:00:01</td><td>12</td><td>4 success</td></tr><tr><td><code>silver_processing_dag</code></td><td><code>scheduled__2026-11-21T06:00:00+00:00</code></td><td>scheduled</td><td>success</td><td>2026-11-21 07:00:01</td><td>12</td><td>2 success</td></tr><tr><td><code>bronze_ingestion_dag</code></td><td><code>manual__2026-11-21T07:00:37+00:00</code></td><td>manual</td><td>success</td><td>2026-11-21 07:00:38</td><td>7</td><td>4 success</td></tr><tr><td><code>bronze_ingestion_dag</code></td><td><code>manual__2026-11-21T07:04:49+00:00</code></td><td>manual</td><td>success</td><td>2026-11-21 07:04:50</td><td>45</td><td>4 success</td></tr><tr><td><code>bronze_ingestion_dag</code></td><td><code>manual__2026-11-21T07:11:29+00:00</code></td><td>manual</td><td>success</td><td>2026-11-21 07:11:30</td><td>8</td><td>4 success</td></tr><tr><td><code>bronze_ingestion_dag</code></td><td><code>manual__2026-11-21T07:17:06+00:00</code></td><td>manual</td><td>success</td><td>2026-11-21 07:17:07</td><td>8</td><td>4 success</td></tr><tr><td><code>silver_processing_dag</code></td><td><code>manual__2026-11-21T07:17:37+00:00</code></td><td>manual</td><td>success</td><td>2026-11-21 07:17:38</td><td>4</td><td>2 success</td></tr></table>
+<p class="small">The first backfill run failed: an ERA5 request stayed blocked honouring a long <code>Retry-After</code>
+header. The client now uses its own short backoff and the DAG has a timeout and retries; the second run skipped the years
+already saved, and its first attempt was stopped by the timeout and completed on retry. The first Silver run used the earlier
+one-file-per-Bronze-file writer, which overwrote files written within the same second (Section 7); its output was discarded
+and those Bronze files were processed again by the next run.</p>
+<figure><img src='../img/ui_dags_list.png' style='width:92%'><figcaption>Figure 2. Airflow UI: the three DAGs.</figcaption></figure><figure><img src='../img/ui_bronze_grid.png' style='width:92%'><figcaption>Figure 3. <code>bronze_ingestion_dag</code> — grid view of the runs.</figcaption></figure><figure><img src='../img/ui_bronze_graph.png' style='width:92%'><figcaption>Figure 4. <code>bronze_ingestion_dag</code> — graph view (three extract tasks → validate_and_persist).</figcaption></figure><figure><img src='../img/ui_backfill_grid.png' style='width:92%'><figcaption>Figure 5. <code>bronze_historical_backfill_dag</code> — failed first run and successful retry.</figcaption></figure><figure><img src='../img/ui_silver_grid.png' style='width:92%'><figcaption>Figure 6. <code>silver_processing_dag</code> — grid view.</figcaption></figure><figure><img src='../img/ui_silver_graph.png' style='width:92%'><figcaption>Figure 7. <code>silver_processing_dag</code> — FileSensor → process_bronze_to_silver.</figcaption></figure><h3>6.2 Files produced</h3>
+<p><b>16 Bronze JSON files</b> (datalake_bronze/):</p>
+<table class='small'><tr><th>File</th><th>Source</th><th>Content</th><th>KB</th></tr><tr><td><code>nasa_glc_20261121_064020.json</code></td><td>nasa_glc</td><td>150 catalog rows in the Colombia box</td><td>254.5</td></tr><tr><td><code>nasa_lhasa_20261121_064020.json</code></td><td>nasa_lhasa</td><td>1,088 files listed; 50 newest kept; 10 station windows</td><td>22.7</td></tr><tr><td><code>openmeteo_era5_2016_20261121_064048.json</code></td><td>openmeteo_era5</td><td>10 points × 366 days (2016)</td><td>144.5</td></tr><tr><td><code>openmeteo_era5_2017_20261121_064048.json</code></td><td>openmeteo_era5</td><td>10 points × 365 days (2017)</td><td>143.9</td></tr><tr><td><code>openmeteo_era5_2018_20261121_064048.json</code></td><td>openmeteo_era5</td><td>10 points × 365 days (2018)</td><td>144.1</td></tr><tr><td><code>openmeteo_era5_2019_20261121_064048.json</code></td><td>openmeteo_era5</td><td>10 points × 365 days (2019)</td><td>144.0</td></tr><tr><td><code>openmeteo_era5_2020_20261121_064048.json</code></td><td>openmeteo_era5</td><td>10 points × 366 days (2020)</td><td>144.3</td></tr><tr><td><code>openmeteo_era5_2021_20261121_064643.json</code></td><td>openmeteo_era5</td><td>10 points × 365 days (2021)</td><td>144.2</td></tr><tr><td><code>openmeteo_era5_2022_20261121_064643.json</code></td><td>openmeteo_era5</td><td>10 points × 365 days (2022)</td><td>144.2</td></tr><tr><td><code>openmeteo_era5_2023_20261121_065745.json</code></td><td>openmeteo_era5</td><td>10 points × 365 days (2023)</td><td>144.0</td></tr><tr><td><code>openmeteo_era5_2024_20261121_065745.json</code></td><td>openmeteo_era5</td><td>10 points × 366 days (2024)</td><td>144.4</td></tr><tr><td><code>openmeteo_era5_2025_20261121_065745.json</code></td><td>openmeteo_era5</td><td>10 points × 365 days (2025)</td><td>144.2</td></tr><tr><td><code>openmeteo_forecast_20261121_064020.json</code></td><td>openmeteo_forecast</td><td>10 points × 120 h</td><td>99.2</td></tr><tr><td><code>openmeteo_forecast_20261121_070009.json</code></td><td>openmeteo_forecast</td><td>10 points × 120 h</td><td>99.2</td></tr><tr><td><code>openmeteo_forecast_20261121_071138.json</code></td><td>openmeteo_forecast</td><td>10 points × 120 h</td><td>99.2</td></tr><tr><td><code>openmeteo_forecast_20261121_071715.json</code></td><td>openmeteo_forecast</td><td>10 points × 120 h</td><td>99.2</td></tr></table>
+<p><b>5 Silver Parquet files</b> (datalake_silver/), lineage read from each file's metadata; 16 Bronze files are
+recorded in the manifest:</p>
+<table class='small'><tr><th>File</th><th>Rows</th><th>Cols</th><th>KB</th><th>Built from</th></tr><tr><td><code>landslides_20261121_070012.parquet</code></td><td>109</td><td>46</td><td>170.4</td><td><code>nasa_glc_20261121_064020.json</code></td></tr><tr><td><code>lhasa_hazard_20261121_070012.parquet</code></td><td>10</td><td>13</td><td>10.7</td><td><code>nasa_lhasa_20261121_064020.json</code></td></tr><tr><td><code>rainfall_20261121_070012.parquet</code></td><td>2,400</td><td>16</td><td>99.8</td><td><code>openmeteo_forecast_20261121_064020.json, openmeteo_forecast_20261121_070009.json</code></td></tr><tr><td><code>rainfall_20261121_071742.parquet</code></td><td>2,400</td><td>16</td><td>100.2</td><td><code>openmeteo_forecast_20261121_071138.json, openmeteo_forecast_20261121_071715.json</code></td></tr><tr><td><code>rainfall_historical_20261121_070012.parquet</code></td><td>36,530</td><td>14</td><td>2,546.9</td><td><code>10 files: openmeteo_era5_2016_20261121_064048.json … openmeteo_era5_2025_20261121_065745.json</code></td></tr></table>
+
+<h3>6.3 Bronze sample (<code>openmeteo_forecast_20261121_071715.json</code>)</h3>
+<pre>{
+  &quot;metadata&quot;: {
+    &quot;source_id&quot;: &quot;openmeteo_forecast&quot;,
+    &quot;source_name&quot;: &quot;Open-Meteo Forecast &amp; Recent API&quot;,
+    &quot;query_timestamp_utc&quot;: &quot;2026-11-21T07:17:09.245841+00:00&quot;,
+    &quot;locations_count&quot;: 10,
+    &quot;past_days&quot;: 2,
+    &quot;forecast_days&quot;: 3,
+    &quot;http_status_code&quot;: 200,
+    &quot;rate_limit_cost&quot;: &quot;10.0&quot;,
+    &quot;payload_sha256&quot;: &quot;d65ef6c7859f352d…&quot;
+  },
+  &quot;data&quot;: [
+    {
+      &quot;location_name&quot;: &quot;Bogota&quot;,
+      &quot;department&quot;: &quot;Cundinamarca&quot;,
+      &quot;requested_latitude&quot;: 4.6097,
+      &quot;requested_longitude&quot;: -74.0817,
+      &quot;returned_latitude&quot;: 4.674868,
+      &quot;returned_longitude&quot;: -74.11331,
+      &quot;elevation_m&quot;: 2582.0,
+      &quot;hourly_units&quot;: {&quot;time&quot;: &quot;iso8601&quot;, &quot;precipitation&quot;: &quot;mm&quot;, &quot;rain&quot;: &quot;mm&quot;, &quot;soil_moisture_0_to_1cm&quot;: &quot;m\u00b3/m\u00b3&quot;},
+      &quot;hourly&quot;: {&quot;time&quot;: [&quot;2026-11-19T00:00&quot;, &quot;2026-11-19T01:00&quot;, &quot;2026-11-19T02:00&quot;, …], &quot;precipitation&quot;: [0.1, 0.0, 0.0, …], &quot;rain&quot;: [0.0, 0.0, 0.0, …], &quot;soil_moisture_0_to_1cm&quot;: [0.146, 0.147, 0.147, …]}
+    },
+    … 9 more points
+  ]
+}</pre>
+
+<h3>6.4 Data quality results</h3>
+<table class='small'><tr><th>Topic</th><th>Result (computed from the Silver files)</th></tr><tr><td><code>rainfall</code></td><td>4,800 rows from 4 forecast polls (10 points × 120 h each); 0 null precipitation; 0 soil-moisture values interpolated; 2,214 wet hours; 150 IQR flags and 50 Z-score flags (3.1% / 1.0% of rows); maximum 6.1 mm/h at Medellin, 2026-11-22 20:00 UTC (forecast)</td></tr><tr><td><code>rainfall_historical</code></td><td>36,530 station-days 2016-01-01 → 2025-12-31 from 10 yearly files; 0 missing days; wettest mean Manizales (18.8 mm/day), driest Bogota (2.5 mm/day); daily maximum 211.8 mm (Villavicencio, 2017-07-02); 600 null 7-day sums (first 6 days of each yearly file)</td></tr><tr><td><code>landslides</code></td><td>109 events kept from the box (101 Colombia, 8 without country, foreign-labelled events excluded); 70 with unknown time; 5 without fatality count (kept null); 7 fatality IQR flags (max 329, Mocoa 2017); 6,004 tokens</td></tr><tr><td><code>lhasa_hazard</code></td><td>10 station windows of raster 2026-11-19; highest <code>lhasa_max</code> 0.308 at Pasto; 0 stations ≥ 0.5</td></tr></table>
+<figure><img src='../figures/rainfall_analysis.png' style='width:95%'><figcaption>Figure 8. Latest rainfall Silver file (<code>rainfall_20261121_071742.parquet</code>, all polls it contains): distribution of hourly precipitation and mean by station.</figcaption></figure>
+<p>Mean hourly precipitation by station (all polls): Pasto 0.92, Ibague 0.34, Pereira 0.33, Manizales 0.26 mm/h.</p>
+<figure><img src='../figures/nlp_keywords.png' style='width:80%'><figcaption>Figure 9. Most frequent tokens in the GLC narratives after cleaning and stop-word removal (the figure also omits generic reporting words such as <i>said</i>).</figcaption></figure>
+<p>The catalog is written in English, so the most frequent tokens are English words: <i>people</i> (108), <i>landslide</i> (103), <i>said</i> (83), <i>colombia</i> (82), <i>department</i> (67), <i>rains</i> (61), <i>mudslide</i> (56), <i>heavy</i> (53).</p>
+
+<h3>6.5 Silver samples</h3>
+<p><code>rainfall</code> — wettest hours of Medellin in the poll that contains the maximum:</p>
+<table class="small">
+  <thead>
+    <tr style="text-align: right;">
+      <th>station_name</th>
+      <th>timestamp</th>
+      <th>precipitation_mm</th>
+      <th>soil_moisture_m3m3</th>
+      <th>precip_outlier_iqr</th>
+      <th>precip_outlier_zscore</th>
+      <th>precip_zscore</th>
+      <th>_bronze_source_file</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Medellin</td>
+      <td>2026-11-22 20:00</td>
+      <td>6.1</td>
+      <td>0.394</td>
+      <td>True</td>
+      <td>True</td>
+      <td>5.843</td>
+      <td>openmeteo_forecast_20261121_064020.json</td>
+    </tr>
+    <tr>
+      <td>Medellin</td>
+      <td>2026-11-19 17:00</td>
+      <td>2.3</td>
+      <td>0.338</td>
+      <td>True</td>
+      <td>False</td>
+      <td>1.859</td>
+      <td>openmeteo_forecast_20261121_064020.json</td>
+    </tr>
+    <tr>
+      <td>Medellin</td>
+      <td>2026-11-20 20:00</td>
+      <td>1.6</td>
+      <td>0.386</td>
+      <td>True</td>
+      <td>False</td>
+      <td>1.125</td>
+      <td>openmeteo_forecast_20261121_064020.json</td>
+    </tr>
+    <tr>
+      <td>Medellin</td>
+      <td>2026-11-20 21:00</td>
+      <td>1.0</td>
+      <td>0.390</td>
+      <td>False</td>
+      <td>False</td>
+      <td>0.496</td>
+      <td>openmeteo_forecast_20261121_064020.json</td>
+    </tr>
+  </tbody>
+</table>
+<p><code>landslides</code> — Mocoa 2017 (no country in the catalog, kept null and flagged) and the El Tambo pair 3352/3353:</p>
+<table class="small">
+  <thead>
+    <tr style="text-align: right;">
+      <th>event_id</th>
+      <th>event_date</th>
+      <th>timestamp_utc</th>
+      <th>is_time_unknown</th>
+      <th>country_name</th>
+      <th>country_missing</th>
+      <th>fatality_count</th>
+      <th>fatality_outlier_iqr</th>
+      <th>token_count</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>3353</td>
+      <td>04/11/2011 12:00:00 AM</td>
+      <td>2011-04-11 05:00</td>
+      <td>True</td>
+      <td>Colombia</td>
+      <td>False</td>
+      <td>5</td>
+      <td>False</td>
+      <td>56</td>
+    </tr>
+    <tr>
+      <td>3352</td>
+      <td>04/11/2011 08:00:00 AM</td>
+      <td>2011-04-11 13:00</td>
+      <td>False</td>
+      <td>Colombia</td>
+      <td>False</td>
+      <td>0</td>
+      <td>False</td>
+      <td>32</td>
+    </tr>
+    <tr>
+      <td>10790</td>
+      <td>03/25/2017 05:32:00 PM</td>
+      <td>2017-03-25 22:32</td>
+      <td>False</td>
+      <td>null</td>
+      <td>True</td>
+      <td>329</td>
+      <td>True</td>
+      <td>47</td>
+    </tr>
+  </tbody>
+</table>
+<p><code>lhasa_hazard</code> — three highest station windows:</p>
+<table class="small">
+  <thead>
+    <tr style="text-align: right;">
+      <th>station_name</th>
+      <th>nominal_issue_time</th>
+      <th>valid_pixel_count</th>
+      <th>lhasa_max</th>
+      <th>lhasa_mean</th>
+      <th>lhasa_p90</th>
+      <th>has_high_hazard</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Pasto</td>
+      <td>2026-11-19 00:00</td>
+      <td>876</td>
+      <td>0.308</td>
+      <td>0.084</td>
+      <td>0.162</td>
+      <td>False</td>
+    </tr>
+    <tr>
+      <td>Medellin</td>
+      <td>2026-11-19 00:00</td>
+      <td>830</td>
+      <td>0.169</td>
+      <td>0.058</td>
+      <td>0.114</td>
+      <td>False</td>
+    </tr>
+    <tr>
+      <td>Manizales</td>
+      <td>2026-11-19 00:00</td>
+      <td>898</td>
+      <td>0.100</td>
+      <td>0.015</td>
+      <td>0.027</td>
+      <td>False</td>
+    </tr>
+  </tbody>
+</table>
+<p><code>rainfall_historical</code> — ERA5 baseline per station (mm/day):</p>
+<table class="small">
+  <thead>
+    <tr style="text-align: right;">
+      <th>station_name</th>
+      <th>mean_daily</th>
+      <th>p95_daily</th>
+      <th>max_daily</th>
+      <th>max_7d</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Manizales</td>
+      <td>18.8</td>
+      <td>55.5</td>
+      <td>161.5</td>
+      <td>619.4</td>
+    </tr>
+    <tr>
+      <td>Bucaramanga</td>
+      <td>11.7</td>
+      <td>38.8</td>
+      <td>177.9</td>
+      <td>383.3</td>
+    </tr>
+    <tr>
+      <td>Mocoa</td>
+      <td>11.7</td>
+      <td>40.4</td>
+      <td>181.1</td>
+      <td>490.3</td>
+    </tr>
+    <tr>
+      <td>Pereira</td>
+      <td>11.5</td>
+      <td>41.3</td>
+      <td>125.7</td>
+      <td>484.8</td>
+    </tr>
+    <tr>
+      <td>Villavicencio</td>
+      <td>11.2</td>
+      <td>39.9</td>
+      <td>211.8</td>
+      <td>403.8</td>
+    </tr>
+    <tr>
+      <td>Ibague</td>
+      <td>11.1</td>
+      <td>34.8</td>
+      <td>71.8</td>
+      <td>323.6</td>
+    </tr>
+    <tr>
+      <td>Pasto</td>
+      <td>9.9</td>
+      <td>29.5</td>
+      <td>75.0</td>
+      <td>223.3</td>
+    </tr>
+    <tr>
+      <td>Cali</td>
+      <td>9.2</td>
+      <td>28.4</td>
+      <td>93.6</td>
+      <td>242.5</td>
+    </tr>
+    <tr>
+      <td>Medellin</td>
+      <td>6.1</td>
+      <td>18.5</td>
+      <td>70.0</td>
+      <td>150.3</td>
+    </tr>
+    <tr>
+      <td>Bogota</td>
+      <td>2.5</td>
+      <td>10.8</td>
+      <td>51.7</td>
+      <td>127.9</td>
+    </tr>
+  </tbody>
+</table>
+<div class="note"><b>Data-quality finding (source, not code).</b> Annual totals per station show an implausible value:
+Manizales 2016 sums 17,122 mm, while the same cell gives 4,394–6,675 mm in the
+other years. We checked the API directly: requesting the pure <code>era5</code> model (nearest 0.25° cell) returns practically the same total, so the value
+comes from the reanalysis itself, a coarse grid over very steep terrain, not from our code.
+Silver keeps the values as delivered (nothing is invented or removed); the Gold layer will compare station-year totals
+against the multi-year distribution of each cell and exclude anomalous years from the percentile baseline.</div>
+<p>Annual ERA5 totals (mm):</p>
+<table class="small">
+  <thead>
+    <tr style="text-align: right;">
+      <th>station_name</th>
+      <th>2016</th>
+      <th>2017</th>
+      <th>2018</th>
+      <th>2019</th>
+      <th>2020</th>
+      <th>2021</th>
+      <th>2022</th>
+      <th>2023</th>
+      <th>2024</th>
+      <th>2025</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Bogota</td>
+      <td>1112</td>
+      <td>1045</td>
+      <td>880</td>
+      <td>905</td>
+      <td>743</td>
+      <td>811</td>
+      <td>1005</td>
+      <td>764</td>
+      <td>856</td>
+      <td>1053</td>
+    </tr>
+    <tr>
+      <td>Bucaramanga</td>
+      <td>7179</td>
+      <td>3041</td>
+      <td>3836</td>
+      <td>3349</td>
+      <td>5076</td>
+      <td>4604</td>
+      <td>4837</td>
+      <td>3282</td>
+      <td>3636</td>
+      <td>4063</td>
+    </tr>
+    <tr>
+      <td>Cali</td>
+      <td>3285</td>
+      <td>3362</td>
+      <td>3700</td>
+      <td>3775</td>
+      <td>3652</td>
+      <td>3936</td>
+      <td>3735</td>
+      <td>3012</td>
+      <td>2406</td>
+      <td>2878</td>
+    </tr>
+    <tr>
+      <td>Ibague</td>
+      <td>1655</td>
+      <td>3764</td>
+      <td>3999</td>
+      <td>3375</td>
+      <td>2983</td>
+      <td>4118</td>
+      <td>5260</td>
+      <td>4982</td>
+      <td>5223</td>
+      <td>5178</td>
+    </tr>
+    <tr>
+      <td>Manizales</td>
+      <td>17122</td>
+      <td>4931</td>
+      <td>6225</td>
+      <td>5600</td>
+      <td>6314</td>
+      <td>6675</td>
+      <td>6491</td>
+      <td>5511</td>
+      <td>4394</td>
+      <td>5479</td>
+    </tr>
+    <tr>
+      <td>Medellin</td>
+      <td>2702</td>
+      <td>2078</td>
+      <td>2106</td>
+      <td>1922</td>
+      <td>2198</td>
+      <td>2258</td>
+      <td>2686</td>
+      <td>1983</td>
+      <td>2176</td>
+      <td>2194</td>
+    </tr>
+    <tr>
+      <td>Mocoa</td>
+      <td>2618</td>
+      <td>3449</td>
+      <td>4783</td>
+      <td>4682</td>
+      <td>2887</td>
+      <td>4332</td>
+      <td>3963</td>
+      <td>4516</td>
+      <td>4930</td>
+      <td>6736</td>
+    </tr>
+    <tr>
+      <td>Pasto</td>
+      <td>2314</td>
+      <td>3530</td>
+      <td>3374</td>
+      <td>3390</td>
+      <td>3230</td>
+      <td>4606</td>
+      <td>4487</td>
+      <td>3457</td>
+      <td>3535</td>
+      <td>4147</td>
+    </tr>
+    <tr>
+      <td>Pereira</td>
+      <td>14500</td>
+      <td>2612</td>
+      <td>2492</td>
+      <td>2296</td>
+      <td>2458</td>
+      <td>3078</td>
+      <td>3780</td>
+      <td>3240</td>
+      <td>3393</td>
+      <td>4111</td>
+    </tr>
+    <tr>
+      <td>Villavicencio</td>
+      <td>2066</td>
+      <td>5290</td>
+      <td>5728</td>
+      <td>5048</td>
+      <td>3466</td>
+      <td>3839</td>
+      <td>3478</td>
+      <td>3594</td>
+      <td>3928</td>
+      <td>4580</td>
+    </tr>
+  </tbody>
+</table>
+<h3>6.6 Tests</h3>
+<p><code>pytest tests/</code>: 16 passed (3 Workshop #1 + 13 Workshop #2), run with pandas 2.1.4 / Airflow 2.10.5 and with pandas 3.1. The Workshop #2 tests cover the API client, the scraper, Bronze validation,
+NLP cleaning, both outlier methods (with and without zero exclusion), the four transforms, the unknown-time flag, the
+rejection of missing/impossible rainfall, the soil-moisture gap rule, and that missing countries and fatality counts are
+not imputed. Tests that call a live source are skipped when there is no network.</p>
+<h2>7. Challenges and Corrections</h2>
+<table class='small'><tr><th>Problem found</th><th>Cause</th><th>Correction</th></tr><tr><td>The FileSensor never detected the Bronze flag inside Docker</td><td><code>AIRFLOW_CONN_FS_DEFAULT='fs:///opt/airflow/datalake_bronze'</code> puts the folder in the URI path, which <code>FSHook</code> ignores (base path = '')</td><td>Connection given as <code>fs://?path=%2Fopt%2Fairflow%2Fdatalake_bronze</code> (verified with Airflow's <code>Connection</code> parser)</td></tr><tr><td>First version: sensor on <code>filepath="."</code></td><td>The folder always exists, so the sensor never waited</td><td>Sensor on <code>_READY.flag</code>, written only when new Bronze files exist; flag consumed before listing to avoid losing a concurrent batch</td></tr><tr><td>Silver files silently overwritten</td><td>One Parquet per Bronze file named to the second: 5 ERA5 years processed in the same second produced 2 files</td><td>One Parquet per topic and run; atomic writer that refuses to overwrite</td></tr><tr><td>Invented values in Silver</td><td><code>fillna(0)</code> on precipitation, fatalities and injuries; null country set to "Colombia"</td><td>Missing values kept null and flagged; impossible/missing rainfall rejected and counted (Section 4.1)</td></tr><tr><td>Invented data in Bronze when a source failed</td><td>Scraper fell back to a hard-coded HTML listing, and to a Workshop #1 sample raster labelled with today's date</td><td>Fallbacks removed: the task fails and Airflow retries (2 retries, 10-min timeout)</td></tr><tr><td>Duplicated Bronze/Silver data</td><td>Every run re-wrote identical payloads (e.g. the static GLC snapshot)</td><td>Unchanged payloads (same SHA-256) are not persisted; daily/monthly cadence for LHASA/GLC</td></tr><tr><td>Implausible ERA5 annual total for one cell</td><td>Reanalysis bias over steep terrain (verified directly against the API)</td><td>Kept as delivered and documented; to be screened in Gold before computing percentiles</td></tr><tr><td>ERA5 backfill blocked for minutes</td><td>urllib3 honoured a long <code>Retry-After</code> on HTTP 429</td><td>Own short backoff; Airflow retries and execution timeout</td></tr><tr><td>Precipitation outliers meaningless</td><td>IQR over all hours: with most hours dry, any rain was flagged</td><td>Per-station, wet-hours-only IQR and Z-score</td></tr><tr><td><code>workshop_2/</code> missing from the repository</td><td><code>.gitignore</code> had <code>Workshop_2/</code>; Git on Windows ignores case, so it also hid <code>workshop_2/</code></td><td>Entry removed; report, figures and screenshots versioned in <code>workshop_2/</code></td></tr><tr><td>Report figures not matching the data</td><td>Numbers written by hand (e.g. token frequencies, outlier percentages, hashes of files not in the repository)</td><td>Report generated by <code>build_report.py</code> from the committed files and the exported Airflow run history</td></tr><tr><td>Docker images not reachable from the development machine</td><td>Network policy</td><td>Runs executed with Airflow installed with pip on the same code; compose file validated</td></tr></table>
+<h2>8. Conclusions and Next Steps</h2>
+<p>The pipeline ingests four live sources into an immutable Bronze layer and produces typed, flagged and traceable Silver
+tables without inventing values. For Workshop #3 the Gold layer (PySpark) will read all Silver files, keep the most recent
+forecast poll per station-hour, assign GLC events to Colombia spatially, compute 24 h / 7 d antecedent rainfall and ERA5
+percentiles per station, combine them with the LHASA hazard values, and produce the landslide risk indicator.</p>
+
+<h2>9. References</h2>
+<ol class="small">
+<li>Apache Airflow documentation — TaskFlow API, FileSensor, FSHook connections. https://airflow.apache.org/docs/</li>
+<li>Open-Meteo — Forecast API and Historical Weather (ERA5) API documentation. https://open-meteo.com/en/docs</li>
+<li>NASA LHASA nowcast data, NCCS DataShare. https://portal.nccs.nasa.gov/datashare/landslides/nrt/hazard/tif/</li>
+<li>Kirschbaum, D. B. et al. (2010). A global landslide catalog for hazard applications. <i>Natural Hazards</i>, 52(3), 561–575.</li>
+<li>Stanley, T. A. &amp; Kirschbaum, D. B. (2017). A heuristic approach to global landslide susceptibility mapping. <i>Natural Hazards</i>, 87, 145–164.</li>
+</ol>
+</body></html>
