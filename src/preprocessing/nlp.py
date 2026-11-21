@@ -35,7 +35,14 @@ STOPWORDS_EN = {
     "than", "too", "very", "s", "t", "can", "will", "just", "don", "should", "now"
 }
 
-ALL_STOPWORDS = STOPWORDS_ES.union(STOPWORDS_EN)
+# Workshop #3 refinement: news-reporting words and numbers that dominated the GLC token
+# counts in Workshop #2 without describing the event (e.g. "said" was the 3rd most frequent token)
+DOMAIN_NOISE = {
+    "said", "according", "reported", "near", "km", "kilometers", "miles", "one", "two", "three",
+    "four", "five", "least", "also", "around", "located", "occurred", "took", "place",
+}
+
+ALL_STOPWORDS = STOPWORDS_ES.union(STOPWORDS_EN).union(DOMAIN_NOISE)
 
 
 def strip_accents(text: str) -> str:

@@ -18,6 +18,9 @@ x-airflow-common: &airflow-common
     GDAL_DISABLE_READDIR_ON_OPEN: "EMPTY_DIR"
     CPL_VSIL_CURL_ALLOWED_EXTENSIONS: ".tif"
     GDAL_HTTP_TIMEOUT: "30"
+    # Workshop #3: PySpark local mode inside the Airflow worker
+    SPARK_DRIVER_MEMORY: "1g"
+    DATALAKE_ROOT: /opt/airflow
   volumes:
     - ./datalake_bronze:/opt/airflow/datalake_bronze
     - ./datalake_silver:/opt/airflow/datalake_silver

@@ -136,3 +136,22 @@ pytest tests/ -v
 
 ### 4. Explore Silver Parquet Files
 Open `notebooks/02_silver_layer_exploration.ipynb` in Jupyter or VS Code to inspect the schema, NLP token frequencies, and outlier distributions.
+
+---
+
+## Workshop #3 — Gold Layer (PySpark)
+
+| Layer | Status | Where |
+|---|---|---|
+| Bronze | Hourly ingestion (Open-Meteo forecast, LHASA scraping + station hazards, GLC) and ERA5 backfill | `datalake_bronze/` |
+| Silver | FileSensor-triggered cleaning; **one folder per topic** (`rainfall/`, `rainfall_historical/`, `landslides/`, `lhasa_hazard/`) | `datalake_silver/<topic>/` |
+| Gold | `gold_processing_dag` (daily 00:30 UTC): PySpark `local[*]` reads each Silver folder and writes `governance_*.parquet` and `storytelling_*.parquet` | `datalake_gold/` |
+
+**Run the Gold DAG:** rebuild the image once (it now includes Java 17 and PySpark 3.5.3) with `docker compose build`,
+start the stack with `docker compose up -d`, open `http://localhost:8080`, unpause `gold_processing_dag` and press ▶
+*Trigger DAG*. Outside Airflow: `python -m src.gold.transformations` (needs Java 17+ and `pyspark==3.5.3`).
+
+- Gold code: `src/gold/transformations.py`; DAG: `airflow/dags/gold_processing_dag.py`
+- Notebooks: `notebooks/03_data_quality_findings.ipynb` (pandas data-quality findings), `notebooks/04_gold_preview.ipynb` (reads Gold)
+- Report: `workshop_3/Workshop3_Report_Team7.pdf` (built by `workshop_3/report/build_report.py`)
+- One-off migration of the Workshop #2 Silver files: `scripts/migrate_silver_w3.py`

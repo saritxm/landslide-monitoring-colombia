@@ -1,0 +1,58 @@
+[
+  {
+    "dag_id": "gold_processing_dag",
+    "run_id": "scheduled__2026-11-20T00:30:00+00:00",
+    "run_type": "scheduled",
+    "state": "success",
+    "start_date": "2026-11-21 17:59:39.498315",
+    "end_date": "2026-11-21 18:00:22.344108",
+    "tasks": [
+      {
+        "task_id": "check_silver_inputs",
+        "state": "success",
+        "try_number": 1,
+        "duration_s": 0.101208
+      },
+      {
+        "task_id": "build_gold",
+        "state": "success",
+        "try_number": 1,
+        "duration_s": 36.936225
+      },
+      {
+        "task_id": "validate_gold",
+        "state": "success",
+        "try_number": 1,
+        "duration_s": 0.19076
+      }
+    ]
+  },
+  {
+    "dag_id": "gold_processing_dag",
+    "run_id": "manual__2026-11-21T17:59:40+00:00",
+    "run_type": "manual",
+    "state": "success",
+    "start_date": "2026-11-21 18:00:23.488994",
+    "end_date": "2026-11-21 18:01:05.395899",
+    "tasks": [
+      {
+        "task_id": "check_silver_inputs",
+        "state": "success",
+        "try_number": 1,
+        "duration_s": 0.114873
+      },
+      {
+        "task_id": "build_gold",
+        "state": "success",
+        "try_number": 1,
+        "duration_s": 35.864484
+      },
+      {
+        "task_id": "validate_gold",
+        "state": "success",
+        "try_number": 1,
+        "duration_s": 0.200296
+      }
+    ]
+  }
+]

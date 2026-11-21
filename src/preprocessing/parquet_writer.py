@@ -36,7 +36,9 @@ def write_dataframe_to_silver_parquet(
     Returns:
         Path of written Parquet file.
     """
-    dest_dir = output_dir or SILVER_DIR
+    # Workshop #3: one sub-folder per topic, so that each topic can be read as a single
+    # folder with one consistent schema: spark.read.parquet("datalake_silver/<topic>/")
+    dest_dir = (output_dir or SILVER_DIR) / topic
     dest_dir.mkdir(parents=True, exist_ok=True)
 
     ts = timestamp or datetime.now(timezone.utc)
@@ -69,6 +71,10 @@ def write_dataframe_to_silver_parquet(
         tmp_path,
         compression="snappy",
         version="2.6",
+        # Workshop #3: Spark 3.5 cannot read nanosecond timestamps (TIMESTAMP(NANOS));
+        # every source has at most second precision, so microseconds lose nothing.
+        coerce_timestamps="us",
+        allow_truncated_timestamps=True,
     )
     os.replace(tmp_path, target_path)
     logger.info("Persisted Silver Parquet file: %s (%d rows)", target_path, len(df))
