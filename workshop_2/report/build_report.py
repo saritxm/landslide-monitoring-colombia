@@ -133,7 +133,7 @@ def sample_bronze():
     for k in ("location_name", "department", "requested_latitude", "requested_longitude", "returned_latitude",
               "returned_longitude", "elevation_m"):
         lines.append(f'      "{k}": {json.dumps(loc[k])},')
-    lines.append(f'      "hourly_units": {json.dumps(loc["hourly_units"])},')
+    lines.append(f'      "hourly_units": {json.dumps(loc["hourly_units"], ensure_ascii=False)},')
     h = loc["hourly"]
     lines.append('      "hourly": {' + ", ".join(f'"{k}": {json.dumps(v[:3])[:-1]}, …]' for k, v in h.items()) + "}")
     lines += ["    },", f"    … {len(d['data']) - 1} more points", "  ]", "}"]
@@ -200,8 +200,9 @@ point), and loads the NASA Global Landslide Catalog; <code>bronze_historical_bac
 the Bronze DAGs, applies type/time normalization, conservative null handling, NLP text cleaning, IQR/Z-score outlier
 flagging and deduplication, and writes one <code>topic_YYYYMMDD_HHMMSS.parquet</code> per topic and run, traceable to its
 Bronze files.</li>
-<li><b>Evidence:</b> {len(runs)} DAG runs ({sum(v for (d, s), v in n_runs.items() if s == 'success')} successful), {len(bronze_files)} Bronze JSON files and
-{len(silver_files)} Silver Parquet files ({len(rain) + len(hist) + len(glc) + len(lhasa):,} rows) produced from the live sources
+<li><b>Evidence:</b> the stack was built and run with Docker Compose (Airflow 2.9.2, LocalExecutor, PostgreSQL); both
+hourly DAGs and the FileSensor worked in the containers (Section 6.1). Together with the development runs, {len(bronze_files)} Bronze JSON files and
+{len(silver_files)} Silver Parquet files ({len(rain) + len(hist) + len(glc) + len(lhasa):,} rows) were produced from the live sources
 since {first_run:%Y-%m-%d %H:%M} UTC; {esc(tests_line)}.</li>
 </ul>
 
@@ -304,12 +305,54 @@ run is marked skipped, not failed.</p>
 """)
 
 # ---- results
+# Files whose stamp is on or after DOCKER_FROM were produced by the Docker Compose stack
+# (Airflow 2.9.2, LocalExecutor, PostgreSQL 15) on a team member's Windows machine;
+# earlier files come from the development runs listed in airflow_runs.json.
+DOCKER_FROM = "20261121_150000"
+
+
+def stamp_of(path):
+    return "_".join(path.stem.split("_")[-2:])
+
+
+docker_bronze = [f for f in bronze_files if stamp_of(f) >= DOCKER_FROM]
+docker_silver = [f for f in silver_files if stamp_of(f) >= DOCKER_FROM]
+d_rows = []
+for f in docker_silver:
+    src = json.loads(pq.read_schema(f).metadata[b"bronze_source_files"])
+    d_rows.append((f"<code>{f.name}</code>", f"{pq.read_metadata(f).num_rows:,}", "<br>".join(f"<code>{x}</code>" for x in src)))
+
 H.append(f"""<h2 class="pb">6. Results Evidence</h2>
-<div class="note"><b>Execution environment.</b> The runs below were executed on the development machine with Apache Airflow
-2.10.5 installed with pip (SequentialExecutor, SQLite metadata DB), because Docker Hub could not be reached from it to pull
-the images. The DAG files, source modules and data folders are exactly the ones mounted by <code>docker-compose.yml</code>;
-the compose file was validated with <code>docker compose config</code>.</div>
-<h3>6.1 Airflow runs</h3>
+<h3>6.1 Runs in the Docker Compose stack</h3>
+<p>The stack was built and started with <code>docker compose build</code> and <code>docker compose up -d</code> on a team
+member's Windows machine (Docker Desktop, WSL 2) on 21 November 2026: image <code>landslide-monitoring-airflow:2.9.2</code>,
+LocalExecutor, PostgreSQL 15 metadata database. The DAGs ran on their hourly schedule and from manual triggers between
+15:01 and 17:24 UTC. They produced {len(docker_bronze)} Bronze files and {len(docker_silver)} Silver files, all included in
+Section 6.3; LHASA and GLC were not downloaded again because the daily/monthly cadence had already been met that day.</p>
+{table(["Silver file written in Docker", "Rows", "Built from (Bronze files, from the Parquet metadata)"], d_rows)}
+<p class="small">One manual Silver run found no <code>_READY.flag</code> (no new Bronze data): the sensor waited 5 minutes and the
+run ended as <i>skipped</i>, not failed (pink square in the Silver grid view below). The Bronze file written right after it
+(<code>{docker_bronze[2].name if len(docker_bronze) > 2 else ''}</code>) left its flag in place and was processed by the next
+scheduled Silver run, so no file is lost between runs.</p>
+""")
+shots = [("docker_compose_ps.png", "<code>docker compose up -d</code> and <code>docker compose ps</code>: postgres and webserver healthy, scheduler and triggerer up."),
+         ("docker_desktop_containers.png", "Docker Desktop: the five containers of the stack (airflow-init exits after migrating the database)."),
+         ("docker_ui_dags_list.png", "Airflow 2.9.2 UI in Docker: the three DAGs."),
+         ("docker_ui_bronze_grid.png", "<code>bronze_ingestion_dag</code> — grid view, successful runs."),
+         ("docker_ui_bronze_graph.png", "<code>bronze_ingestion_dag</code> — graph of one run: three extract tasks → validate_and_persist, all success."),
+         ("docker_ui_silver_grid.png", "<code>silver_processing_dag</code> — five runs, all successful; the pink square is the run skipped for lack of new data."),
+         ("docker_ui_silver_graph.png", "<code>silver_processing_dag</code> — FileSensor → process_bronze_to_silver, both success."),
+         ("docker_ui_backfill_grid.png", "<code>bronze_historical_backfill_dag</code> — manual run in Docker; the ten years already present were skipped.")]
+k = 2
+for name, cap in shots:
+    if (ROOT / "workshop_2" / "img" / name).exists():
+        H.append(img(f"../img/{name}", f"Figure {k}. {cap}", "92%"))
+        k += 1
+
+H.append(f"""<h3>6.2 Development runs</h3>
+<p>Before the Docker test, the DAGs were developed and run with Apache Airflow 2.10.5 installed with pip on the development
+machine (SequentialExecutor, SQLite), on the same DAG files, modules and data folders. That run history, exported from the
+metadata database to <code>workshop_2/report/airflow_runs.json</code>, produced the remaining Bronze and Silver files:</p>
 {table(["DAG", "Run id", "Type", "State", "Start (UTC)", "Seconds", "Tasks"], r_rows)}
 <p class="small">The first backfill run failed: an ERA5 request stayed blocked honouring a long <code>Retry-After</code>
 header. The client now uses its own short backoff and the DAG has a timeout and retries; the second run skipped the years
@@ -317,27 +360,18 @@ already saved, and its first attempt was stopped by the timeout and completed on
 one-file-per-Bronze-file writer, which overwrote files written within the same second (Section 7); its output was discarded
 and those Bronze files were processed again by the next run.</p>
 """)
-shots = [("ui_dags_list.png", "Airflow UI: the three DAGs."), ("ui_bronze_grid.png", "<code>bronze_ingestion_dag</code> — grid view of the runs."),
-         ("ui_bronze_graph.png", "<code>bronze_ingestion_dag</code> — graph view (three extract tasks → validate_and_persist)."),
-         ("ui_backfill_grid.png", "<code>bronze_historical_backfill_dag</code> — failed first run and successful retry."),
-         ("ui_silver_grid.png", "<code>silver_processing_dag</code> — grid view."), ("ui_silver_graph.png", "<code>silver_processing_dag</code> — FileSensor → process_bronze_to_silver.")]
-k = 2
-for name, cap in shots:
-    if (ROOT / "workshop_2" / "img" / name).exists():
-        H.append(img(f"../img/{name}", f"Figure {k}. {cap}", "92%"))
-        k += 1
 
-H.append(f"""<h3>6.2 Files produced</h3>
+H.append(f"""<h3>6.3 Files produced</h3>
 <p><b>{len(bronze_files)} Bronze JSON files</b> (datalake_bronze/):</p>
 {table(["File", "Source", "Content", "KB"], b_rows)}
 <p><b>{len(silver_files)} Silver Parquet files</b> (datalake_silver/), lineage read from each file's metadata; {len(manifest)} Bronze files are
 recorded in the manifest:</p>
 {table(["File", "Rows", "Cols", "KB", "Built from"], s_rows)}
 
-<h3>6.3 Bronze sample (<code>{bronze_name}</code>)</h3>
+<h3>6.4 Bronze sample (<code>{bronze_name}</code>)</h3>
 <pre>{esc(bronze_txt)}</pre>
 
-<h3>6.4 Data quality results</h3>
+<h3>6.5 Data quality results</h3>
 {table(["Topic", "Result (computed from the Silver files)"], [
     ("<code>rainfall</code>", f"{len(rain):,} rows from {polls} forecast polls (10 points × 120 h each); 0 null precipitation; "
      f"{int(rain.soil_moisture_imputed.sum())} soil-moisture values interpolated; {len(wet):,} wet hours; "
@@ -361,7 +395,7 @@ recorded in the manifest:</p>
 {img('../figures/nlp_keywords.png', f'Figure {k + 1}. Most frequent tokens in the GLC narratives after cleaning and stop-word removal (the figure also omits generic reporting words such as <i>said</i>).', '80%')}
 <p>The catalog is written in English, so the most frequent tokens are English words: {', '.join(f'<i>{w}</i> ({c})' for w, c in tokens.most_common(8))}.</p>
 
-<h3>6.5 Silver samples</h3>
+<h3>6.6 Silver samples</h3>
 <p><code>rainfall</code> — wettest hours of {mx.station_name} in the poll that contains the maximum:</p>
 {df_html(rain_sample)}
 <p><code>landslides</code> — Mocoa 2017 (no country in the catalog, kept null and flagged) and the El Tambo pair 3352/3353:</p>
@@ -378,7 +412,7 @@ Silver keeps the values as delivered (nothing is invented or removed); the Gold 
 against the multi-year distribution of each cell and exclude anomalous years from the percentile baseline.</div>
 <p>Annual ERA5 totals (mm):</p>
 {df_html(annual.astype("Int64").rename_axis(columns=None).reset_index())}
-<h3>6.6 Tests</h3>
+<h3>6.7 Tests</h3>
 <p><code>pytest tests/</code>: {esc(tests_line)}. The Workshop #2 tests cover the API client, the scraper, Bronze validation,
 NLP cleaning, both outlier methods (with and without zero exclusion), the four transforms, the unknown-time flag, the
 rejection of missing/impossible rainfall, the soil-moisture gap rule, and that missing countries and fatality counts are
@@ -398,7 +432,7 @@ H.append("""<h2>7. Challenges and Corrections</h2>
     ("Precipitation outliers meaningless", "IQR over all hours: with most hours dry, any rain was flagged", "Per-station, wet-hours-only IQR and Z-score"),
     ("<code>workshop_2/</code> missing from the repository", "<code>.gitignore</code> had <code>Workshop_2/</code>; Git on Windows ignores case, so it also hid <code>workshop_2/</code>", "Entry removed; report, figures and screenshots versioned in <code>workshop_2/</code>"),
     ("Report figures not matching the data", "Numbers written by hand (e.g. token frequencies, outlier percentages, hashes of files not in the repository)", "Report generated by <code>build_report.py</code> from the committed files and the exported Airflow run history"),
-    ("Docker images not reachable from the development machine", "Network policy", "Runs executed with Airflow installed with pip on the same code; compose file validated"),
+    ("Docker images not reachable from the development machine", "Network policy", "Development runs with Airflow installed with pip on the same code; the stack was then built and run with Docker Desktop on a team member's machine (Section 6.1)"),
 ]) + f"""
 <h2>8. Conclusions and Next Steps</h2>
 <p>The pipeline ingests four live sources into an immutable Bronze layer and produces typed, flagged and traceable Silver
