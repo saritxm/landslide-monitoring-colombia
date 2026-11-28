@@ -5,16 +5,16 @@ Team 7 — Professor: Eng. Carlos Andrés Sierra, M.Sc.
 
 ## Hazard & Domain Context
 
-Landslides (mass movements) in Colombia are predominantly triggered by intense or prolonged rainfall on steep slopes across the Andean and Pacific regions. This system integrates historical landslide inventories with historical and real-time precipitation models and satellite hazard rasters to calculate a regional **Landslide Risk Indicator**.
+Landslides (mass movements) in Colombia are predominantly triggered by intense or prolonged rainfall on steep slopes across the Andean and Pacific regions. This platform implements an end-to-end Medallion Lakehouse that integrates historical landslide inventories, historical and real-time precipitation models, and satellite hazard rasters to compute a regional **Landslide Risk Indicator (LRI)** and deliver interactive decision-support dashboards.
 
-- **Geographic scope:** Colombia (Bounding Box: lat −4.3 to 13.5, lon −79.1 to −66.8)
-- **Historical window:** Landslides 2007–2017 (NASA GLC catalog); rainfall 2007–present (ERA5 reanalysis)
-- **Incremental window:** Open-Meteo real-time forecast and NASA LHASA NRT hazard rasters
+- **Geographic scope:** Colombia (Bounding Box: lat −4.3 to 13.5, lon −79.1 to −66.8; 10 Andean monitoring points)
+- **Historical window:** Landslides 2007–2017 (NASA GLC catalog); rainfall 2016–2025 (ERA5 reanalysis)
+- **Incremental window:** Open-Meteo hourly forecast (`past_days=2` + 3 forecast days) and NASA LHASA NRT hazard rasters
 
 ## Team 7 Members
 
 | Student ID | Name |
-|---|---|
+| :--- | :--- |
 | 20231020072 | Samuel Alberto Leal Saenz |
 | 20231020100 | Cristian Andres Gámez Nuñez |
 | 20231020116 | Sara Nicolle Martínez Moreno |
@@ -23,7 +23,7 @@ Landslides (mass movements) in Colombia are predominantly triggered by intense o
 
 ## Technical Architecture (Medallion Lakehouse)
 
-The project implements a modern Medallion Architecture orchestrated via Apache Airflow running in Docker Compose:
+The system is orchestrated with **Apache Airflow** in Docker Compose, processes Gold-layer aggregations in **PySpark (`local[*]`)**, and serves two independent **Plotly Dash** web applications reading exclusively from the Gold Parquet files:
 
 ```
 [ Open-Meteo API ]      [ NASA LHASA Scraper ]      [ NASA GLC Catalog ]
@@ -40,18 +40,27 @@ The project implements a modern Medallion Architecture orchestrated via Apache A
                                   │
                                   ▼
                      [ silver_processing_dag ]
-         (Schema Enforcement · Null Flagging (no invented values) · NLP Normalization · IQR/Z-score Outliers)
+         (Schema Enforcement · Null Flagging · NLP Normalization · IQR/Z-score Outliers)
                                   │
                                   ▼
-                   datalake_silver/topic_YYYYMMDD_HHMMSS.parquet
+                 datalake_silver/<topic>/topic_YYYYMMDD_HHMMSS.parquet
                                   │
                                   ▼
-                   datalake_gold/ (Planned - Workshop #3 PySpark)
+                      [ gold_processing_dag ] (PySpark)
+                                  │
+                ┌─────────────────┴─────────────────┐
+                ▼                                   ▼
+datalake_gold/governance_*.parquet   datalake_gold/storytelling_*.parquet
+                │                                   │
+                ▼                                   ▼
+   [ Governance Dashboard ]            [ Storytelling Dashboard ]
+     http://localhost:8050               http://localhost:8051
 ```
 
-1. **Bronze Layer (`datalake_bronze/`):** Immutable landing zone storing raw JSON payloads with datetime nomenclature (`source_YYYYMMDD_HHMMSS.json`).
-2. **Silver Layer (`datalake_silver/`):** Cleaned, typed, and standardized Parquet tables (`topic_YYYYMMDD_HHMMSS.parquet`) with Snappy compression, bilingual NLP text normalization on landslide narratives, statistical outlier flags, and end-to-end data lineage.
-3. **Gold Layer (`datalake_gold/`):** Planned for Workshop #3 (PySpark spatial-temporal joins on a 0.25° grid to compute the Landslide Risk Indicator).
+1. **Bronze Layer (`datalake_bronze/`):** Immutable landing zone storing raw JSON payloads (`source_YYYYMMDD_HHMMSS.json`) and `_READY.flag`.
+2. **Silver Layer (`datalake_silver/<topic>/`):** Cleaned, typed, microsecond-timestamp Parquet tables partitioned into topic folders (`rainfall/`, `rainfall_historical/`, `landslides/`, `lhasa_hazard/`) with bilingual NLP normalization and statistical outlier flags.
+3. **Gold Layer (`datalake_gold/`):** PySpark analytical summaries (`governance_YYYYMMDD_HHMMSS.parquet` and `storytelling_YYYYMMDD_HHMMSS.parquet`) serving as the single source of truth for the presentation layer.
+4. **Presentation Layer (`dashboard/`):** Two independent Plotly Dash applications (`governance_app.py` on port `8050` and `storytelling_app.py` on port `8051`) reading exclusively via `pd.read_parquet()`.
 
 ---
 
@@ -60,98 +69,105 @@ The project implements a modern Medallion Architecture orchestrated via Apache A
 ```
 ├── airflow/
 │   └── dags/
-│       ├── bronze_ingestion_dag.py        # TaskFlow API ingestion DAG (hourly)
+│       ├── bronze_ingestion_dag.py            # Hourly TaskFlow API ingestion DAG
 │       ├── bronze_historical_backfill_dag.py  # Manual ERA5 daily-rainfall backfill by year
-│       └── silver_processing_dag.py        # FileSensor-triggered Silver transformation DAG
+│       ├── silver_processing_dag.py           # FileSensor-triggered Silver preprocessing DAG
+│       └── gold_processing_dag.py             # Scheduled PySpark Silver-to-Gold DAG
 ├── config/
-│   └── sources.yaml                       # Formal declarative source contract
-├── datalake_bronze/                       # Bronze raw JSON landing files
-├── datalake_silver/                       # Silver standardized Parquet files
-├── datalake_gold/                         # Gold analytical layer (Workshop #3)
+│   └── sources.yaml                           # Declarative source contracts & schedules
+├── dashboard/
+│   ├── governance_app.py                      # Governance Dashboard (http://localhost:8050)
+│   ├── storytelling_app.py                    # Storytelling Dashboard (http://localhost:8051)
+│   ├── utils.py                               # Gold Parquet loader, Okabe-Ito palette & layout helpers
+│   └── README.md                              # Dashboard architecture & component reference
+├── datalake_bronze/                           # Bronze raw JSON landing zone
+├── datalake_silver/                           # Silver topic folders (Parquet)
+├── datalake_gold/                             # Gold Parquet outputs (governance & storytelling)
 ├── notebooks/
-│   ├── 01_source_profiling.ipynb          # Workshop #1 data profiling & Prophet experiment
-│   └── 02_silver_layer_exploration.ipynb  # Workshop #2 Parquet exploration & data audits
-├── scripts/
-│   ├── generate_report_figures.py         # Figures for the Workshop #2 report (from Silver data)
-│   └── create_exploration_notebook.py     # Notebook generator
+│   ├── 01_source_profiling.ipynb              # Workshop #1 source profiling & Prophet baseline
+│   ├── 02_silver_layer_exploration.ipynb      # Workshop #2 Silver Parquet exploration
+│   ├── 03_data_quality_findings.ipynb         # Workshop #3 data-quality audit
+│   └── 04_gold_preview.ipynb                  # Workshop #3 Gold Parquet preview
+├── scripts/                                   # Helper & migration scripts
 ├── src/
-│   ├── sources/                           # API client (Open-Meteo), Scraper (BS4), GLC loader
-│   ├── preprocessing/                     # Cleaning, NLP normalizer, Outliers, Parquet writer
-│   └── validation/                        # Bronze payload schema validator
-├── tests/
-│   ├── test_workshop1.py                  # Workshop #1 automated tests
-│   └── test_workshop2.py                  # Workshop #2 automated tests (ingestion, NLP, Parquet)
-├── workshop_1/                            # Workshop #1 deliverables (samples, mapping)
-├── workshop_2/                            # Workshop #2 deliverables (report PDF, HTML)
-│   ├── Workshop2_Report_Team7.pdf         # Workshop #2 technical report (revised)
-│   ├── img/                               # Airflow UI screenshots used in the report
-│   └── report/                            # Report source (HTML) and builder script
-├── docker-compose.yml                     # Airflow containerized stack definition
-├── Dockerfile                             # Custom Airflow image with Python dependencies
-└── requirements.txt                       # Project Python requirements
+│   ├── sources/                               # Open-Meteo client, NASA LHASA scraper, GLC loader
+│   ├── preprocessing/                         # Cleaning, NLP normalizer, outliers, Parquet writer
+│   ├── validation/                            # Bronze payload schema validator
+│   └── gold/
+│       └── transformations.py                 # PySpark Gold KPIs & LRI storytelling aggregations
+├── tests/                                     # Automated unit & integration tests
+├── workshop_1/                                # Workshop #1 deliverables (mapping, samples, report)
+├── workshop_2/                                # Workshop #2 deliverables (report PDF & screenshots)
+├── workshop_3/                                # Workshop #3 deliverables (LaTeX report & figures)
+├── workshop_4/                                # Workshop #4 deliverables (report PDF & screenshots)
+├── docker-compose.yml                         # Airflow + PostgreSQL containerized stack
+├── Dockerfile                                 # Custom Airflow 2.9.2 + OpenJDK 17 + PySpark 3.5.3 image
+└── requirements.txt                           # Python dependencies (pipeline + Dash/Plotly)
 ```
 
 ---
 
-## Quickstart & Docker Setup
+## End-to-End Reproducibility Guide (From a Clean Clone)
 
 ### Prerequisites
-- Docker Desktop (active and running)
-- Python 3.11+ (for local scripts and Jupyter)
+- **Docker Desktop** (running)
+- **Python 3.11+** (to run the Plotly Dash applications locally)
 
-### 1. Launch Airflow in Docker
+### Step 1: Clone the Repository & Install Python Dependencies
 ```bash
-docker compose up -d
-```
-Verify all containers are healthy:
-```bash
-docker compose ps
-```
-Services started:
-- `postgres`: PostgreSQL 15 metadata database.
-- `airflow-init`: Automatic DB migration and admin user creation.
-- `airflow-webserver`: Web UI accessible at `http://localhost:8080` (`admin` / `admin`).
-- `airflow-scheduler`: Task scheduler and LocalExecutor runner.
-- `airflow-triggerer`: Async sensor/trigger handler.
+git clone https://github.com/saritxm/landslide-monitoring-colombia.git
+cd landslide-monitoring-colombia
 
-### 2. Run the Airflow DAGs
-Open `http://localhost:8080`:
-1. Unpause `bronze_ingestion_dag` and trigger a run. It queries Open-Meteo, scrapes NASA LHASA, validates payloads, and writes JSON files to `datalake_bronze/`.
-2. `silver_processing_dag` waits (FileSensor) for the `_READY.flag` written by the Bronze DAGs, processes every Bronze file not yet in `datalake_silver/.processed_manifest.json`, and writes one Parquet file per topic to `datalake_silver/`.
-3. Optional: trigger `bronze_historical_backfill_dag` (parameters `start_year`, `end_year`) to download ERA5 daily rainfall by year; the Silver DAG then writes `rainfall_historical_*.parquet`.
-
-Data-quality policy: missing values are flagged and kept null, never replaced by invented values (no 0 mm of rain, no 0 deaths, no assumed country). Rows with a missing or physically impossible precipitation value are rejected and counted. If a source cannot be reached, the task fails and Airflow retries it; there is no offline fallback that would write made-up data.
-
-### 3. Local Environment & Automated Testing
-```bash
-# Activate virtual environment
+# Create and activate a virtual environment (Windows PowerShell)
+python -m venv .venv
 .venv\Scripts\activate
 
-# Install requirements
+# Install all pipeline and dashboard dependencies
 pip install -r requirements.txt
+```
 
-# Run all test suites
+### Step 2: Build and Start the Docker Airflow Stack
+```bash
+docker compose build
+docker compose up -d
+```
+Verify that `postgres`, `airflow-webserver`, `airflow-scheduler`, and `airflow-triggerer` are healthy (`docker compose ps`).
+
+### Step 3: Trigger the Medallion Pipeline in Airflow UI
+1. Open **`http://localhost:8080`** and sign in with **`admin` / `admin`**.
+2. Unpause all DAGs if paused, then trigger them in sequence:
+   1. **`bronze_ingestion_dag`** (`▶ Trigger DAG`): Fetches Open-Meteo forecasts, scrapes NASA LHASA rasters, validates payloads, and writes raw JSON files plus `_READY.flag` to `datalake_bronze/`.
+   2. **`silver_processing_dag`**: Automatically triggered via `FileSensor` when `_READY.flag` appears; cleans and writes standardized Parquet files into `datalake_silver/<topic>/`. *(Optional: run `bronze_historical_backfill_dag` with `start_year=2016`, `end_year=2025` to refresh the ERA5 baseline).*
+   3. **`gold_processing_dag`** (`▶ Trigger DAG`): Runs PySpark in `local[*]` mode across all Silver folders and writes `governance_YYYYMMDD_HHMMSS.parquet` and `storytelling_YYYYMMDD_HHMMSS.parquet` into `datalake_gold/`.
+
+*(Alternatively, outside Airflow with Java 17+ installed, you can generate Gold files directly via `python -m src.gold.transformations`).*
+
+### Step 4: Launch Both Interactive Dashboards (Plotly Dash)
+Open **two separate terminals** in the repository root (with `.venv` activated) and start each independent application:
+
+```bash
+# Terminal 1 — Data Governance & Quality Observatory (Technical Audience · US-06)
+python dashboard/governance_app.py
+```
+- Accessible at **`http://localhost:8050`**
+- Displays KPI summary cards (total records, null rates, duplicate reduction, schema compliance), null rate bar chart by severity, daily volume over time, outlier/quality flag rates, SLA compliance chart, and an interactive threshold table. Includes auto-refresh (60s) and a **Refresh Gold Data** button.
+
+```bash
+# Terminal 2 — Andean Landslide Risk Monitor (Functional User: UNGRD Analyst · US-01 to US-04)
+python dashboard/storytelling_app.py
+```
+- Accessible at **`http://localhost:8051`**
+- Displays the operational situation summary card, interactive filters (Department, Alert Level, Focus Station), semantic risk distribution donut (`LOW`=green, `MEDIUM`=amber, `HIGH`=red), interactive spatial risk map with historical landslides within 30 km, hourly rainfall trend, daily rainfall vs. 10-year historical P90, multi-source signal comparison (Open-Meteo API vs. NASA LHASA scraping), top narrative keywords colored by mean fatalities, and historical landslide activity/triggers.
+
+---
+
+## Automated Tests
+
+```bash
 pytest tests/ -v
 ```
 
-### 4. Explore Silver Parquet Files
-Open `notebooks/02_silver_layer_exploration.ipynb` in Jupyter or VS Code to inspect the schema, NLP token frequencies, and outlier distributions.
+## Data Attribution
 
----
-
-## Workshop #3 — Gold Layer (PySpark)
-
-| Layer | Status | Where |
-|---|---|---|
-| Bronze | Hourly ingestion (Open-Meteo forecast, LHASA scraping + station hazards, GLC) and ERA5 backfill | `datalake_bronze/` |
-| Silver | FileSensor-triggered cleaning; **one folder per topic** (`rainfall/`, `rainfall_historical/`, `landslides/`, `lhasa_hazard/`) | `datalake_silver/<topic>/` |
-| Gold | `gold_processing_dag` (daily 00:30 UTC): PySpark `local[*]` reads each Silver folder and writes `governance_*.parquet` and `storytelling_*.parquet` | `datalake_gold/` |
-
-**Run the Gold DAG:** rebuild the image once (it now includes Java 17 and PySpark 3.5.3) with `docker compose build`,
-start the stack with `docker compose up -d`, open `http://localhost:8080`, unpause `gold_processing_dag` and press ▶
-*Trigger DAG*. Outside Airflow: `python -m src.gold.transformations` (needs Java 17+ and `pyspark==3.5.3`).
-
-- Gold code: `src/gold/transformations.py`; DAG: `airflow/dags/gold_processing_dag.py`
-- Notebooks: `notebooks/03_data_quality_findings.ipynb` (pandas data-quality findings), `notebooks/04_gold_preview.ipynb` (reads Gold)
-- Report: `workshop_3/Workshop3_Report_Team7.pdf` (LaTeX source generated by `workshop_3/report/build_tex.py`)
-- One-off migration of the Workshop #2 Silver files: `scripts/migrate_silver_w3.py`
+- **NASA Global Landslide Catalog (GLC)** & **NASA LHASA Near-Real-Time Hazard Rasters** (Public Domain / NASA Open Data).
+- **Weather Data by Open-Meteo.com** (licensed under CC BY 4.0).
