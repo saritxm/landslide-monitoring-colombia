@@ -356,7 +356,7 @@ def update_storytelling(dept: str, risk_lvl: str, focus_station: str, _n_clicks:
 
     # --- 3. Interactive Map of Monitoring Points + Historical Landslides within 30 km ---
     if not st_df.empty:
-        fig_map = px.scatter_mapbox(
+        fig_map = px.scatter_map(
             st_df,
             lat="latitude",
             lon="longitude",
@@ -384,17 +384,17 @@ def update_storytelling(dept: str, risk_lvl: str, focus_station: str, _n_clicks:
         ].dropna(subset=["latitude", "longitude"])
         if not near.empty:
             fig_map.add_trace(
-                go.Scattermapbox(
+                go.Scattermap(
                     lat=near["latitude"],
                     lon=near["longitude"],
                     mode="markers",
                     marker=dict(size=6, color="#2C3E50", opacity=0.55),
                     name="Historical Landslides (<=30 km)",
-                    text=near["period"] + " · " + near["text"].fillna(""),
+                    text=near["period"].fillna("").astype(str) + " · " + near["text"].fillna("").astype(str),
                     hoverinfo="text",
                 )
             )
-        fig_map.update_layout(mapbox_style="open-street-map")
+        fig_map.update_layout(map_style="open-street-map")
         fig_map = style_figure(
             fig_map,
             title="Spatial Risk Map: Andean Monitoring Points & Nearby Landslides (US-01 / US-04)",
