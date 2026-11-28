@@ -191,32 +191,35 @@ def style_figure(
     xaxis_title: str = "",
     yaxis_title: str = "",
     source_note: str = "Source: Gold Layer Parquet",
-    height: int = 370,
+    height: int = 390,
     show_legend: bool = True,
 ) -> go.Figure:
     """Applies consistent typography, margins, axis labels, and source annotation."""
     fig.update_layout(
         title=dict(
             text=f"<b>{title}</b>",
-            font=dict(size=14, color=PALETTE["primary"]),
+            font=dict(size=13.5, color=PALETTE["primary"]),
             x=0.01,
+            y=0.96,
             xanchor="left",
+            yanchor="top",
         ),
         xaxis_title=xaxis_title,
         yaxis_title=yaxis_title,
         height=height,
-        margin=dict(l=55, r=25, t=52, b=68),
+        margin=dict(l=55, r=25, t=78, b=78),
         paper_bgcolor=PALETTE["card"],
         plot_bgcolor="#FAFBFD",
         font=dict(family="Inter, Segoe UI, sans-serif", size=11, color="#222222"),
         showlegend=show_legend,
         legend=dict(
+            title_text="",
             orientation="h",
             yanchor="bottom",
-            y=1.01,
-            xanchor="right",
-            x=1.0,
-            bgcolor="rgba(255,255,255,0.7)",
+            y=1.02,
+            xanchor="left",
+            x=0.0,
+            bgcolor="rgba(255,255,255,0.8)",
         ),
         hovermode="closest",
     )
@@ -224,13 +227,13 @@ def style_figure(
     fig.update_yaxes(showgrid=True, gridcolor="#E6ECF2", zeroline=False)
     fig.add_annotation(
         text=source_note,
-        xref="paper",
-        yref="paper",
-        x=0.0,
-        y=-0.20,
+        xref="container",
+        yref="container",
+        x=0.015,
+        y=0.015,
         xanchor="left",
-        yanchor="top",
+        yanchor="bottom",
         showarrow=False,
-        font=dict(size=10, color=PALETTE["slate"]),
+        font=dict(size=9.5, color=PALETTE["slate"]),
     )
     return fig
